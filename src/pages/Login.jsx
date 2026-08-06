@@ -244,8 +244,13 @@ export default function Login() {
                 alt="Tabba Heart Institute"
                 className="thi-logo"
                 onError={(e) => {
-                  e.target.style.display = 'none'
-                  document.getElementById('thi-logo-fallback').style.display = 'flex'
+                  if (!e.target.dataset.triedPng) {
+                    e.target.dataset.triedPng = '1'
+                    e.target.src = 'https://tabbaheart.org/wp-content/uploads/2025/09/tabba-heart-favicon0.png'
+                  } else {
+                    e.target.style.display = 'none'
+                    document.getElementById('thi-logo-fallback').style.display = 'flex'
+                  }
                 }}
               />
               {/* Fallback logo */}

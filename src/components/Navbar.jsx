@@ -105,14 +105,13 @@ export default function Navbar({ user }) {
       <nav className="thi-nav">
         <div className="thi-nav-left">
           <img
-            src="https://tabbaheart.org/wp-content/uploads/2025/09/tabba-heart-favicon0.png"
+            src="https://tabbaheart.org/wp-content/uploads/2023/07/tabba-heart-logo-01.svg"
             alt="Tabba Heart Institute"
             className="thi-nav-logo"
             onError={(e) => {
-              // Try the SVG logo as fallback
-              if (!e.target.dataset.triedSvg) {
-                e.target.dataset.triedSvg = '1'
-                e.target.src = 'https://tabbaheart.org/wp-content/uploads/2023/07/tabba-heart-logo-01.svg'
+              if (!e.target.dataset.triedPng) {
+                e.target.dataset.triedPng = '1'
+                e.target.src = 'https://tabbaheart.org/wp-content/uploads/2025/09/tabba-heart-favicon0.png'
               } else {
                 e.target.style.display = 'none'
                 e.target.nextSibling.style.display = 'flex'
