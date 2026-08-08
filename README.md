@@ -9,20 +9,70 @@ The application is deployed on Vercel and can be accessed here:
 **[https://petty-cash-app-nu.vercel.app](https://petty-cash-app-nu.vercel.app)**
 
 ## ✨ Features
-- **Secure Authentication**: Staff sign-in is managed securely via Supabase Authentication.
-- **Responsive Design**: A sleek, full-width, mobile-friendly interface styled with modern CSS.
-- **Branded UI**: Incorporates official Tabba Heart Institute branding (logos, favicons, typography, and color schemes).
-- **Dashboard**: A central hub for staff to manage their petty cash workflow (Feature currently in active development).
+
+### 🔐 Authentication
+- Secure staff sign-in via Supabase Authentication
+- Role-based access control (Creator, HOD, CFO)
+
+### 📊 Dashboard
+- **Summary Cards** — Total Outstanding Balance, Pending Approvals, and Total Expenses This Month at a glance
+- **Expense Reports Table** — All reports with S.No, Date, Submitted By, Total Expenses (PKR), Outstanding Balance (PKR), Status, and Actions
+- **Status Badges** — Color-coded indicators: Draft (grey), Submitted (yellow), HOD Approved (blue), CFO Approved (green)
+- **Role-Based Actions** — Edit, HOD Approve, CFO Approve, and View buttons appear based on the logged-in user's role
+- **"+ New Report"** button to create a new expense report
+
+### ✅ Approval Workflow
+A multi-level approval pipeline for expense reports:
+1. **Creator** (`aftab@thi.com`, `idrees@thi.com`) — Creates and submits expense reports
+2. **HOD** (`zeeshan@thi.com`) — Reviews and approves submitted reports → status becomes `hod_approved`
+3. **CFO** (`arshad@thi.com`) — Final approval → status becomes `cfo_approved`
+
+Approval buttons show a loading spinner during the update and the table refreshes automatically without a full page reload.
+
+### 📝 New Expense Report
+- Report header with institution, department, date, and submitter selection
+- Balance summary with previous balance, cash received, total expenses, and outstanding balance
+- Line items table with description, section, category, and amount
+- Section subtotals and grand total calculated automatically
+- Save as Draft or Submit for Approval
+
+### 📄 Report Detail & PDF Export
+- **Printable Layout** — Two-column header with org info and balance summary
+- **Grouped Line Items** — Items grouped by section with subtotal rows and a grand total row
+- **Signature Section** — Three signature blocks for Senior Manager FMES, HOD FMES, and CFO
+- **PDF Export** — One-click export to A4 PDF using `html2canvas` and `jsPDF`, saved as `expense-report-[date].pdf`
+
+### 🎨 Design
+- Responsive, mobile-friendly interface
+- Official Tabba Heart Institute branding (logos, colors, typography)
+- Montserrat font family with clean, professional styling
+- Subtle animations and hover effects
 
 ## 🛠️ Tech Stack
 - **Frontend**: React 19, Vite, React Router
-- **Backend & Auth**: Supabase
-- **Styling**: Vanilla CSS with customized, branded design variables
+- **Backend & Auth**: Supabase (PostgreSQL + Auth)
+- **PDF Generation**: html2canvas + jsPDF
+- **Styling**: Vanilla CSS with branded design variables
 - **Deployment**: Vercel
 
-## 💻 Local Development Setup
+## 📁 Project Structure
+```
+src/
+├── components/
+│   └── Navbar.jsx          # Top navigation bar with logo and logout
+├── lib/
+│   └── supabase.js         # Supabase client configuration
+├── pages/
+│   ├── Dashboard.jsx       # Main dashboard with cards, table, approval workflow
+│   ├── Login.jsx           # Authentication page
+│   ├── NewReport.jsx       # Create new expense report form
+│   └── ReportDetail.jsx    # Report detail view with PDF export
+├── App.jsx                 # Root component with routing and auth
+├── index.css               # Global styles and design tokens
+└── main.jsx                # Application entry point
+```
 
-To run this project locally on your machine, follow these steps:
+## 💻 Local Development Setup
 
 ### 1. Clone the repository
 ```bash
