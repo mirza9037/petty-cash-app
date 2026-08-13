@@ -12,10 +12,10 @@ const ROLE_MAP = {
 }
 
 const STATUS_BADGES = {
-  draft: { bg: '#e8e8e8', color: '#666' },
+  draft: { bg: '#e8e8e8', color: '#555' },
   submitted: { bg: '#fef3cd', color: '#856404' },
-  hod_approved: { bg: '#cce5ff', color: '#fff' },
-  cfo_approved: { bg: '#d4edda', color: '#fff' },
+  hod_approved: { bg: '#cce5ff', color: '#004085' },
+  cfo_approved: { bg: '#d4edda', color: '#155724' },
 }
 
 const STATUS_LABELS = {
