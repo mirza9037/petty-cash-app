@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import Navbar from '../components/Navbar'
@@ -26,19 +26,28 @@ export default function ReportDetail({ user }) {
   const printRef = useRef(null)
 
   // ── State ────────────────────────────────────────────────────────────────────
-  const [report, setReport] = useState(null)
-  const [items, setItems] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [report, setReport]       = useState(null)
+  const [items, setItems]         = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [fetchError, setFetchError] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState('')
 
   // ── Fetch data ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const fetchData = async () => {
+      setFetchError('')
       const [reportRes, itemsRes] = await Promise.all([
         supabase.from('expense_reports').select('*').eq('id', id).single(),
         supabase.from('expense_items').select('*').eq('report_id', id).order('sno', { ascending: true }),
       ])
-      if (reportRes.data) setReport(reportRes.data)
+
+      if (reportRes.error) {
+        setFetchError(`Failed to load report: ${reportRes.error.message}`)
+      } else if (reportRes.data) {
+        setReport(reportRes.data)
+      }
+
       if (itemsRes.data) setItems(itemsRes.data)
       setLoading(false)
     }
@@ -65,8 +74,12 @@ export default function ReportDetail({ user }) {
 
   // ── PDF Export ───────────────────────────────────────────────────────────────
   const handleExportPDF = async () => {
-    if (!printRef.current) return
+    if (!printRef.current) {
+      setExportError('Print area not ready. Please wait and try again.')
+      return
+    }
     setExporting(true)
+    setExportError('')
 
     try {
       const canvas = await html2canvas(printRef.current, {
@@ -79,19 +92,19 @@ export default function ReportDetail({ user }) {
       const imgData = canvas.toDataURL('image/png')
       const pdf = new jsPDF('p', 'mm', 'a4')
 
-      const pageWidth = pdf.internal.pageSize.getWidth()
+      const pageWidth  = pdf.internal.pageSize.getWidth()
       const pageHeight = pdf.internal.pageSize.getHeight()
       const margin = 10
       const printableWidth = pageWidth - margin * 2
 
-      const imgWidth = printableWidth
+      const imgWidth  = printableWidth
       const imgHeight = (canvas.height * imgWidth) / canvas.width
 
       if (imgHeight <= pageHeight - margin * 2) {
         // Fits on a single page
         pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight)
       } else {
-        // Multi-page: slice the canvas
+        // Multi-page: slice the canvas into page-height chunks
         const pxPerPage = ((pageHeight - margin * 2) / imgWidth) * canvas.width
         let yOffset = 0
         let page = 0
@@ -101,12 +114,16 @@ export default function ReportDetail({ user }) {
 
           const sliceHeight = Math.min(pxPerPage, canvas.height - yOffset)
           const sliceCanvas = document.createElement('canvas')
-          sliceCanvas.width = canvas.width
+          sliceCanvas.width  = canvas.width
           sliceCanvas.height = sliceHeight
           const ctx = sliceCanvas.getContext('2d')
-          ctx.drawImage(canvas, 0, yOffset, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight)
+          ctx.drawImage(
+            canvas,
+            0, yOffset, canvas.width, sliceHeight,
+            0, 0,       canvas.width, sliceHeight,
+          )
 
-          const sliceImg = sliceCanvas.toDataURL('image/png')
+          const sliceImg       = sliceCanvas.toDataURL('image/png')
           const sliceImgHeight = (sliceHeight * imgWidth) / canvas.width
           pdf.addImage(sliceImg, 'PNG', margin, margin, imgWidth, sliceImgHeight)
 
@@ -119,9 +136,10 @@ export default function ReportDetail({ user }) {
       pdf.save(filename)
     } catch (err) {
       console.error('PDF export failed:', err)
+      setExportError('PDF export failed. Please try again.')
+    } finally {
+      setExporting(false)
     }
-
-    setExporting(false)
   }
 
   // ── Loading state ────────────────────────────────────────────────────────────
@@ -136,30 +154,52 @@ export default function ReportDetail({ user }) {
           color: '#888',
           fontSize: '14px',
         }}>
+          <span style={{
+            display: 'inline-block',
+            width: 20, height: 20,
+            border: '2px solid #ddd',
+            borderTopColor: '#D21515',
+            borderRadius: '50%',
+            animation: 'spin 0.7s linear infinite',
+            marginRight: 10,
+            verticalAlign: 'middle',
+          }} />
           Loading report…
         </div>
       </>
     )
   }
 
-  if (!report) {
+  if (fetchError || !report) {
     return (
       <>
         <Navbar user={user} />
-        <div style={{
-          padding: '48px 24px',
-          textAlign: 'center',
-          fontFamily: "'Montserrat', system-ui, sans-serif",
-          color: '#888',
-          fontSize: '14px',
-        }}>
-          Report not found.
+        <div style={{ padding: '48px 24px', textAlign: 'center', fontFamily: "'Montserrat', system-ui, sans-serif" }}>
+          <p style={{ color: '#D21515', fontWeight: 600, fontSize: '14px', marginBottom: 16 }}>
+            {fetchError || 'Report not found.'}
+          </p>
+          <button
+            onClick={() => navigate('/dashboard')}
+            style={{
+              padding: '8px 20px',
+              background: '#111',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              fontFamily: "'Montserrat', system-ui, sans-serif",
+              fontWeight: 700,
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            ← Back to Dashboard
+          </button>
         </div>
       </>
     )
   }
 
-  // ── Running counter for S.No across all sections ─────────────────────────────
+  // ── Running S.No counter across all sections ──────────────────────────────────
   let globalSno = 0
 
   return (
@@ -223,8 +263,8 @@ export default function ReportDetail({ user }) {
           transition: background 0.18s, transform 0.12s;
           box-shadow: 0 2px 12px rgba(210,21,21,0.25);
         }
-        .rd-export-btn:hover { background: #a81010; transform: translateY(-1px); }
-        .rd-export-btn:active { transform: translateY(0); }
+        .rd-export-btn:hover:not(:disabled) { background: #a81010; transform: translateY(-1px); }
+        .rd-export-btn:active:not(:disabled) { transform: translateY(0); }
         .rd-export-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
         .rd-spinner {
@@ -236,6 +276,18 @@ export default function ReportDetail({ user }) {
           flex-shrink: 0;
         }
 
+        /* ── Export error ── */
+        .rd-export-error {
+          margin-bottom: 16px;
+          padding: 10px 14px;
+          background: #fff5f5;
+          border: 1.5px solid #D21515;
+          border-radius: 6px;
+          color: #D21515;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
         /* ── Printable area ── */
         .rd-print {
           background: #fff;
@@ -243,6 +295,9 @@ export default function ReportDetail({ user }) {
           border-radius: 10px;
           padding: 40px 36px;
           box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+        }
+        @media (max-width: 600px) {
+          .rd-print { padding: 24px 16px; }
         }
 
         /* ── Header section ── */
@@ -300,9 +355,7 @@ export default function ReportDetail({ user }) {
         }
 
         /* ── Right column summary ── */
-        .rd-summary {
-          text-align: right;
-        }
+        .rd-summary { text-align: right; }
         .rd-summary-row {
           display: flex;
           justify-content: flex-end;
@@ -338,11 +391,11 @@ export default function ReportDetail({ user }) {
           margin: 0 0 12px;
         }
         .rd-table-wrap {
-          overflow-x: auto;
+          overflow-x: auto;                /* FIX: was also setting overflow:hidden which cancelled this */
+          -webkit-overflow-scrolling: touch;
           margin-bottom: 32px;
           border-radius: 6px;
           border: 1px solid #e0e0e0;
-          overflow: hidden;
         }
         .rd-table {
           width: 100%;
@@ -367,7 +420,7 @@ export default function ReportDetail({ user }) {
           color: #333;
         }
         .rd-table tbody tr:nth-child(even) td { background: #fafafa; }
-        .rd-table tbody tr:nth-child(odd) td { background: #fff; }
+        .rd-table tbody tr:nth-child(odd)  td { background: #fff; }
 
         /* Subtotal row */
         .rd-subtotal td {
@@ -397,9 +450,7 @@ export default function ReportDetail({ user }) {
         @media (max-width: 700px) {
           .rd-signatures { grid-template-columns: 1fr; }
         }
-        .rd-sig-block {
-          text-align: center;
-        }
+        .rd-sig-block { text-align: center; }
         .rd-sig-line {
           width: 100%;
           height: 1px;
@@ -440,6 +491,11 @@ export default function ReportDetail({ user }) {
             </button>
           </div>
 
+          {/* Export error (shown outside printable area) */}
+          {exportError && (
+            <div className="rd-export-error">⚠ {exportError}</div>
+          )}
+
           {/* ═══════════ PRINTABLE AREA ═══════════ */}
           <div id="report-printable" ref={printRef} className="rd-print">
             {/* ── Header: Two columns ── */}
@@ -451,7 +507,7 @@ export default function ReportDetail({ user }) {
                 <p className="rd-report-title">Expense Report</p>
                 <div className="rd-field-row">
                   <span className="rd-field-label">To:</span>
-                  <span className="rd-field-value">Finance & Accounts Department</span>
+                  <span className="rd-field-value">Finance &amp; Accounts Department</span>
                 </div>
                 <div className="rd-field-row">
                   <span className="rd-field-label">From:</span>
@@ -499,7 +555,7 @@ export default function ReportDetail({ user }) {
                 </thead>
                 <tbody>
                   {groupedItems.map((section) => (
-                    <>
+                    <React.Fragment key={section.name}>
                       {section.items.map((item) => {
                         globalSno++
                         return (
@@ -517,7 +573,7 @@ export default function ReportDetail({ user }) {
                         )
                       })}
                       {/* Section subtotal */}
-                      <tr key={`sub-${section.name}`} className="rd-subtotal">
+                      <tr className="rd-subtotal">
                         <td></td>
                         <td colSpan={3} style={{ textAlign: 'right' }}>
                           Subtotal — {section.name}
@@ -526,7 +582,7 @@ export default function ReportDetail({ user }) {
                           {fmt(section.subtotal)}
                         </td>
                       </tr>
-                    </>
+                    </React.Fragment>
                   ))}
 
                   {/* Grand total */}
