@@ -73,16 +73,13 @@ export default function NewReport({ user }) {
     const reportPayload = {
       report_date: reportDate,
       submitted_by: staffEntry.name,
-      submitted_by_email: staffEntry.email,
       hod: 'Zeeshan Ahmed',
       institution: 'Tabba Heart Institute',
-      department: 'FMES Department',
       prev_balance: parseFloat(prevBalance) || 0,
       cash_received: parseFloat(cashReceived) || 0,
       total_expenses: totalExpenses,
       outstanding_balance: outstanding,
       status,
-      user_id: user.id,
     }
 
     const { data: report, error: reportErr } = await supabase
