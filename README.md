@@ -1,113 +1,54 @@
-# Petty Cash System - Tabba Heart Institute
+# Petty Cash System — Tabba Heart Institute
 
-![Tabba Heart Institute](public/tabba-logo.svg)
+React/Vite application for the FMES department. Aftab and Idrees share one department cash balance. Staff profiles control creator, HOD, and CFO access.
 
-A modern, secure web application for managing petty cash expenses, specifically built for the **FMES Department** at Tabba Heart Institute.
+## Setup
 
-## 🚀 Live Demo
-The application is deployed on Vercel and can be accessed here:
-**[https://petty-cash-app-nu.vercel.app](https://petty-cash-app-nu.vercel.app)**
+Requires Node.js 22.12 or newer (Node 22 LTS is used in CI).
 
-## ✨ Features
+1. Install dependencies with npm ci --ignore-scripts.
+2. Copy .env.example to .env and set the Supabase project URL and public anon key. Never put an administrator/service-role key in frontend configuration.
+3. Follow [database setup](SUPABASE_RLS_GUIDE.md) before starting this version. The migration creates a new database or upgrades the expected existing schema, replaces unsafe policies, and installs transactional functions. Deployed schema compatibility and legacy ownership require administrator verification.
+4. Run npm run dev. Run npm run build for a production build and npm run preview to inspect it.
 
-### 🔐 Authentication
-- Secure staff sign-in via Supabase Authentication
-- Role-based access control (Creator, HOD, CFO)
+## Workflow
 
-### 📊 Dashboard
-- **Summary Cards** — Total Outstanding Balance, Pending Approvals, and Total Expenses This Month at a glance
-- **Expense Reports Table** — All reports with S.No, Date, Submitted By, Total Expenses (PKR), Outstanding Balance (PKR), Status, and Actions
-- **Status Badges** — Color-coded indicators: Draft (grey), Submitted (yellow), HOD Approved (blue), CFO Approved (green)
-- **Role-Based Actions** — Edit, HOD Approve, CFO Approve, and View buttons appear based on the logged-in user's role
-- **"+ New Report"** button to create a new expense report
+- Creators create a report or edit their own draft. Submitted By comes from their authenticated staff profile.
+- Header and items are validated and saved atomically. Failed or retried requests cannot leave partial reports or duplicate the same request.
+- Submission checks the latest shared opening balance. Use Refresh opening balance if another creator has submitted a report meanwhile.
+- The HOD reviews submitted reports; the CFO reviews HOD-approved reports. Financial content is immutable after submission.
+- The dashboard paginates and filters reports. Summary amounts exclude drafts and cover all reports, not just the current page.
+- Report detail requires successful header, item, and history loads. Inconsistent reports cannot be exported.
+- PDF exports include report ID, status, readable tables with repeated headers, and recorded approval history.
 
-### ✅ Approval Workflow
-A multi-level approval pipeline for expense reports:
-1. **Creator** (`aftab@thi.com`, `idrees@thi.com`) — Creates and submits expense reports
-2. **HOD** (`zeeshan@thi.com`) — Reviews and approves submitted reports → status becomes `hod_approved`
-3. **CFO** (`arshad@thi.com`) — Final approval → status becomes `cfo_approved`
+## Checks
 
-Approval buttons show a loading spinner during the update and the table refreshes automatically without a full page reload.
+- npm test — PostgreSQL authorization/transaction tests plus money, calendar, grouping, and PDF tests.
+- npm run lint — lint warnings and errors fail the command.
+- npm run test:browser — browser regression tests with mocked Supabase responses; no live backend writes.
+- npm run build — production build.
+- npm audit — dependency advisory check.
 
-### 📝 New Expense Report
-- Report header with institution, department, date, and submitter selection
-- Balance summary with previous balance, cash received, total expenses, and outstanding balance
-- Line items table with description, section, category, and amount
-- Section subtotals and grand total calculated automatically
-- Save as Draft or Submit for Approval
+For browser tests, install Chromium using npx playwright install chromium. Windows users with Edge can set PLAYWRIGHT_CHANNEL=msedge instead. The test server uses fake Supabase configuration and intercepts every external request.
 
-### 📄 Report Detail & PDF Export
-- **Printable Layout** — Two-column header with org info and balance summary
-- **Grouped Line Items** — Items grouped by section with subtotal rows and a grand total row
-- **Signature Section** — Three signature blocks for Senior Manager FMES, HOD FMES, and CFO
-- **PDF Export** — One-click export to A4 PDF using `html2canvas` and `jsPDF`, saved as `expense-report-[date].pdf`
+GitHub Actions runs clean installation, lint, unit/database tests, build, and Chromium browser tests on pushes and pull requests. The existing repository is https://github.com/mirza9037/petty-cash-app.
 
-### 🎨 Design
-- Responsive, mobile-friendly interface
-- Official Tabba Heart Institute branding (logos, colors, typography)
-- Montserrat font family with clean, professional styling
-- Subtle animations and hover effects
+## Project layout
 
-## 🛠️ Tech Stack
-- **Frontend**: React 19, Vite, React Router
-- **Backend & Auth**: Supabase (PostgreSQL + Auth)
-- **PDF Generation**: html2canvas + jsPDF
-- **Styling**: Vanilla CSS with branded design variables
-- **Deployment**: Vercel
+- src/pages — login, paginated dashboard, create/edit form, detail.
+- src/lib — shared validation, money/calendar helpers, data API, role checks, lazy-loaded PDF generation.
+- src/components — navigation and application error boundary.
+- src/index.css — shared design tokens and responsive page styles.
+- supabase/migrations — versioned database schema, policies, transactions, and approval functions.
+- supabase/preflight.sql — read-only checks for the deployed schema and legacy data.
+- tests — database, unit, PDF, and browser regression tests.
 
-## 📁 Project Structure
-```
-src/
-├── components/
-│   └── Navbar.jsx          # Top navigation bar with logo and logout
-├── lib/
-│   └── supabase.js         # Supabase client configuration
-├── pages/
-│   ├── Dashboard.jsx       # Main dashboard with cards, table, approval workflow
-│   ├── Login.jsx           # Authentication page
-│   ├── NewReport.jsx       # Create new expense report form
-│   └── ReportDetail.jsx    # Report detail view with PDF export
-├── App.jsx                 # Root component with routing and auth
-├── index.css               # Global styles and design tokens
-└── main.jsx                # Application entry point
-```
+## Deployment
 
-## 💻 Local Development Setup
+Use Vercel with the two public VITE_ variables configured. Apply the database migration first and deploy the frontend in the same maintenance window. Confirm SPA routing, staff access, and the complete approval workflow in staging. See [database setup](SUPABASE_RLS_GUIDE.md) for legacy data reconciliation and rollback considerations.
 
-### 1. Clone the repository
-```bash
-git clone https://github.com/mirza9037/petty-cash-app.git
-cd petty-cash-app
-```
+## Remaining product decisions
 
-### 2. Install dependencies
-```bash
-npm install
-```
+Returning a submitted report for correction and storing receipt attachments require workflow/storage requirements. They are not silently enabled by this release. Standard PDF fonts cover the current English report layout; multilingual exports need an appropriate embedded font.
 
-### 3. Environment Variables
-Create a `.env` file in the root directory. You can copy the provided example:
-```bash
-cp .env.example .env
-```
-Ensure your `.env` file contains your Supabase credentials:
-```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
-*(Note: Never commit your actual `.env` file to version control. It is excluded via `.gitignore`.)*
-
-### 4. Start the development server
-```bash
-npm run dev
-```
-The app will typically be available at `http://localhost:5173`.
-
-## 📦 Deployment
-This project is configured for seamless deployment on **Vercel**. 
-1. Connect your GitHub repository to Vercel.
-2. Ensure the environment variables (`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`) are added in your Vercel project settings under **Settings > Environment Variables**.
-3. Push to the `main` branch to trigger an automatic deployment.
-
-## 📄 License
-© Tabba Heart Institute · Internal System · Authorized Personnel Only
+Internal system — authorized personnel only.

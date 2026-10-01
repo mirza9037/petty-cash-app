@@ -1,169 +1,102 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
 import Navbar from '../components/Navbar'
-import html2canvas from 'html2canvas'
-import { jsPDF } from 'jspdf'
-
-// ── Format helpers ─────────────────────────────────────────────────────────────
-const fmt = (n) => {
-  const num = Number(n) || 0
-  return 'PKR ' + num.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-const fmtDate = (d) => {
-  if (!d) return '—'
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  })
-}
-
+import { loadReport, errorMessage } from '../lib/reports'
+import { groupItems, STATUS_LABELS, formatDate as fmtDate } from '../lib/domain'
+import { formatMoney as fmt, sumMoney, toPaisa } from '../lib/money'
+import { canEdit } from '../lib/roles'
+const EMPTY = []
 export default function ReportDetail({ user }) {
   const { id } = useParams()
   const navigate = useNavigate()
-  const printRef = useRef(null)
-
-  // ── State ────────────────────────────────────────────────────────────────────
-  const [report, setReport]       = useState(null)
-  const [items, setItems]         = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [fetchError, setFetchError] = useState('')
+  const [resource, setResource] = useState(null)
+  const [retry, setRetry] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
-
-  // ── Fetch data ───────────────────────────────────────────────────────────────
+  const report = resource?.report
+  const items = resource?.items || EMPTY
+  const events = resource?.events || EMPTY
+  const loading = resource?.id !== id
+  const fetchError = resource?.error || ''
   useEffect(() => {
-    const fetchData = async () => {
-      setFetchError('')
-      const [reportRes, itemsRes] = await Promise.all([
-        supabase.from('expense_reports').select('*').eq('id', id).single(),
-        supabase.from('expense_items').select('*').eq('report_id', id).order('sno', { ascending: true }),
-      ])
-
-      if (reportRes.error) {
-        setFetchError(`Failed to load report: ${reportRes.error.message}`)
-      } else if (reportRes.data) {
-        setReport(reportRes.data)
-      }
-
-      if (itemsRes.data) setItems(itemsRes.data)
-      setLoading(false)
-    }
-    fetchData()
-  }, [id])
-
-  // ── Group items by section ───────────────────────────────────────────────────
-  const groupedItems = useMemo(() => {
-    const sections = []
-    const sectionMap = {}
-
-    items.forEach((item) => {
-      const sec = item.section || 'Uncategorized'
-      if (!sectionMap[sec]) {
-        sectionMap[sec] = { name: sec, items: [], subtotal: 0 }
-        sections.push(sectionMap[sec])
-      }
-      sectionMap[sec].items.push(item)
-      sectionMap[sec].subtotal += parseFloat(item.amount) || 0
-    })
-
-    return sections
-  }, [items])
-
-  // ── PDF Export ───────────────────────────────────────────────────────────────
+    const controller = new AbortController()
+    loadReport(id, controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted) setResource({ id, ...data })
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setResource({ id, error: errorMessage(error) })
+      })
+    return () => controller.abort()
+  }, [id, retry])
+  const groupedItems = useMemo(
+    () =>
+      groupItems(items).map((group) => {
+        let subtotal
+        try {
+          subtotal = sumMoney(group.items)
+        } catch {
+          subtotal = NaN
+        }
+        return { ...group, subtotal }
+      }),
+    [items],
+  )
+  let reconciled = false
+  try {
+    reconciled =
+      items.length > 0 &&
+      items.length <= 100 &&
+      toPaisa(sumMoney(items)) === toPaisa(report?.total_expenses) &&
+      toPaisa(report.outstanding_balance) ===
+        toPaisa(report.prev_balance) +
+          toPaisa(report.cash_received) -
+          toPaisa(report.total_expenses)
+  } catch {
+    /* Legacy data must be reviewed before export. */
+  }
   const handleExportPDF = async () => {
-    if (!printRef.current) {
-      setExportError('Print area not ready. Please wait and try again.')
-      return
-    }
+    if (!reconciled || exporting) return
     setExporting(true)
     setExportError('')
-
     try {
-      const canvas = await html2canvas(printRef.current, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-      })
-
-      const imgData = canvas.toDataURL('image/png')
-      const pdf = new jsPDF('p', 'mm', 'a4')
-
-      const pageWidth  = pdf.internal.pageSize.getWidth()
-      const pageHeight = pdf.internal.pageSize.getHeight()
-      const margin = 10
-      const printableWidth = pageWidth - margin * 2
-
-      const imgWidth  = printableWidth
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-
-      if (imgHeight <= pageHeight - margin * 2) {
-        // Fits on a single page
-        pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight)
-      } else {
-        // Multi-page: slice the canvas into page-height chunks
-        const pxPerPage = ((pageHeight - margin * 2) / imgWidth) * canvas.width
-        let yOffset = 0
-        let page = 0
-
-        while (yOffset < canvas.height) {
-          if (page > 0) pdf.addPage()
-
-          const sliceHeight = Math.min(pxPerPage, canvas.height - yOffset)
-          const sliceCanvas = document.createElement('canvas')
-          sliceCanvas.width  = canvas.width
-          sliceCanvas.height = sliceHeight
-          const ctx = sliceCanvas.getContext('2d')
-          ctx.drawImage(
-            canvas,
-            0, yOffset, canvas.width, sliceHeight,
-            0, 0,       canvas.width, sliceHeight,
-          )
-
-          const sliceImg       = sliceCanvas.toDataURL('image/png')
-          const sliceImgHeight = (sliceHeight * imgWidth) / canvas.width
-          pdf.addImage(sliceImg, 'PNG', margin, margin, imgWidth, sliceImgHeight)
-
-          yOffset += sliceHeight
-          page++
-        }
-      }
-
-      const filename = `expense-report-${report?.report_date || 'unknown'}.pdf`
-      pdf.save(filename)
-    } catch (err) {
-      console.error('PDF export failed:', err)
+      const { buildReportPdf } = await import('../lib/pdf')
+      buildReportPdf(report, items, events).save(
+        'expense-report-' + report.report_date + '-' + report.id.slice(0, 8) + '.pdf',
+      )
+    } catch {
       setExportError('PDF export failed. Please try again.')
     } finally {
       setExporting(false)
     }
   }
-
   // ── Loading state ────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <>
         <Navbar user={user} />
-        <div style={{
-          padding: '48px 24px',
-          textAlign: 'center',
-          fontFamily: "'Montserrat', system-ui, sans-serif",
-          color: '#888',
-          fontSize: '14px',
-        }}>
-          <span style={{
-            display: 'inline-block',
-            width: 20, height: 20,
-            border: '2px solid #ddd',
-            borderTopColor: '#D21515',
-            borderRadius: '50%',
-            animation: 'spin 0.7s linear infinite',
-            marginRight: 10,
-            verticalAlign: 'middle',
-          }} />
+        <div
+          style={{
+            padding: '48px 24px',
+            textAlign: 'center',
+            fontFamily: "'Montserrat', system-ui, sans-serif",
+            color: '#888',
+            fontSize: '14px',
+          }}
+        >
+          <span
+            style={{
+              display: 'inline-block',
+              width: 20,
+              height: 20,
+              border: '2px solid #ddd',
+              borderTopColor: '#D21515',
+              borderRadius: '50%',
+              animation: 'spin 0.7s linear infinite',
+              marginRight: 10,
+              verticalAlign: 'middle',
+            }}
+          />
           Loading report…
         </div>
       </>
@@ -174,10 +107,27 @@ export default function ReportDetail({ user }) {
     return (
       <>
         <Navbar user={user} />
-        <div style={{ padding: '48px 24px', textAlign: 'center', fontFamily: "'Montserrat', system-ui, sans-serif" }}>
-          <p style={{ color: '#D21515', fontWeight: 600, fontSize: '14px', marginBottom: 16 }}>
+        <div
+          style={{
+            padding: '48px 24px',
+            textAlign: 'center',
+            fontFamily: "'Montserrat', system-ui, sans-serif",
+          }}
+        >
+          <p
+            role="alert"
+            style={{ color: '#D21515', fontWeight: 600, fontSize: '14px', marginBottom: 16 }}
+          >
             {fetchError || 'Report not found.'}
           </p>
+          <button
+            onClick={() => {
+              setResource(null)
+              setRetry((v) => v + 1)
+            }}
+          >
+            Retry
+          </button>
           <button
             onClick={() => navigate('/dashboard')}
             style={{
@@ -204,274 +154,6 @@ export default function ReportDetail({ user }) {
 
   return (
     <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        .rd-page {
-          min-height: 100vh;
-          background: #f9f9f9;
-          font-family: 'Montserrat', 'Segoe UI', system-ui, sans-serif;
-        }
-        .rd-main {
-          max-width: 900px;
-          margin: 0 auto;
-          padding: 28px 24px 48px;
-        }
-
-        /* ── Top bar ── */
-        .rd-topbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 24px;
-          flex-wrap: wrap;
-          gap: 12px;
-        }
-        .rd-back-btn {
-          padding: 8px 18px;
-          font-size: 12px;
-          font-weight: 700;
-          font-family: 'Montserrat', system-ui, sans-serif;
-          color: #333;
-          background: #f0f0f0;
-          border: 1.5px solid #ccc;
-          border-radius: 6px;
-          cursor: pointer;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          transition: background 0.15s, border-color 0.15s;
-        }
-        .rd-back-btn:hover { background: #e4e4e4; border-color: #999; }
-
-        .rd-export-btn {
-          padding: 10px 22px;
-          font-size: 12px;
-          font-weight: 800;
-          letter-spacing: 1px;
-          text-transform: uppercase;
-          background: #D21515;
-          color: #fff;
-          border: none;
-          border-radius: 6px;
-          cursor: pointer;
-          font-family: 'Montserrat', system-ui, sans-serif;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          transition: background 0.18s, transform 0.12s;
-          box-shadow: 0 2px 12px rgba(210,21,21,0.25);
-        }
-        .rd-export-btn:hover:not(:disabled) { background: #a81010; transform: translateY(-1px); }
-        .rd-export-btn:active:not(:disabled) { transform: translateY(0); }
-        .rd-export-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-        .rd-spinner {
-          width: 13px; height: 13px;
-          border: 2px solid rgba(255,255,255,0.35);
-          border-top-color: #fff;
-          border-radius: 50%;
-          animation: spin 0.7s linear infinite;
-          flex-shrink: 0;
-        }
-
-        /* ── Export error ── */
-        .rd-export-error {
-          margin-bottom: 16px;
-          padding: 10px 14px;
-          background: #fff5f5;
-          border: 1.5px solid #D21515;
-          border-radius: 6px;
-          color: #D21515;
-          font-size: 13px;
-          font-weight: 600;
-        }
-
-        /* ── Printable area ── */
-        .rd-print {
-          background: #fff;
-          border: 1px solid #e0e0e0;
-          border-radius: 10px;
-          padding: 40px 36px;
-          box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-        }
-        @media (max-width: 600px) {
-          .rd-print { padding: 24px 16px; }
-        }
-
-        /* ── Header section ── */
-        .rd-header {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 24px;
-          margin-bottom: 32px;
-          padding-bottom: 24px;
-          border-bottom: 2px solid #eee;
-        }
-        @media (max-width: 700px) {
-          .rd-header { grid-template-columns: 1fr; }
-        }
-
-        .rd-org-name {
-          font-size: 18px;
-          font-weight: 800;
-          color: #D21515;
-          margin: 0 0 2px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-        .rd-org-dept {
-          font-size: 13px;
-          font-weight: 700;
-          color: #555;
-          margin: 0 0 12px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-        .rd-report-title {
-          font-size: 16px;
-          font-weight: 800;
-          color: #111;
-          margin: 0 0 12px;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-        }
-        .rd-field-row {
-          display: flex;
-          gap: 6px;
-          margin-bottom: 4px;
-          font-size: 13px;
-          color: #444;
-        }
-        .rd-field-label {
-          font-weight: 700;
-          color: #666;
-          white-space: nowrap;
-        }
-        .rd-field-value {
-          font-weight: 600;
-          color: #111;
-        }
-
-        /* ── Right column summary ── */
-        .rd-summary { text-align: right; }
-        .rd-summary-row {
-          display: flex;
-          justify-content: flex-end;
-          gap: 16px;
-          margin-bottom: 6px;
-          font-size: 13px;
-          color: #444;
-        }
-        .rd-summary-label {
-          font-weight: 600;
-          color: #666;
-        }
-        .rd-summary-value {
-          font-weight: 600;
-          color: #111;
-          font-family: 'Montserrat', monospace;
-          min-width: 130px;
-          text-align: right;
-        }
-        .rd-summary-value.bold {
-          font-weight: 800;
-          color: #D21515;
-          font-size: 14px;
-        }
-
-        /* ── Items table ── */
-        .rd-items-title {
-          font-size: 11px;
-          font-weight: 800;
-          color: #333;
-          letter-spacing: 1.5px;
-          text-transform: uppercase;
-          margin: 0 0 12px;
-        }
-        .rd-table-wrap {
-          overflow-x: auto;                /* FIX: was also setting overflow:hidden which cancelled this */
-          -webkit-overflow-scrolling: touch;
-          margin-bottom: 32px;
-          border-radius: 6px;
-          border: 1px solid #e0e0e0;
-        }
-        .rd-table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 13px;
-        }
-        .rd-table th {
-          background: #111;
-          color: #fff;
-          padding: 10px 14px;
-          text-align: left;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 1px;
-          text-transform: uppercase;
-          white-space: nowrap;
-        }
-        .rd-table td {
-          padding: 9px 14px;
-          border-bottom: 1px solid #f0f0f0;
-          vertical-align: middle;
-          color: #333;
-        }
-        .rd-table tbody tr:nth-child(even) td { background: #fafafa; }
-        .rd-table tbody tr:nth-child(odd)  td { background: #fff; }
-
-        /* Subtotal row */
-        .rd-subtotal td {
-          background: #f0f0f0 !important;
-          font-weight: 700;
-          font-size: 12px;
-          color: #444;
-          border-bottom: 2px solid #ddd;
-        }
-        /* Grand total row */
-        .rd-grand-total td {
-          background: #111 !important;
-          color: #fff !important;
-          font-weight: 800;
-          font-size: 13px;
-          border: none;
-        }
-
-        /* ── Signature section ── */
-        .rd-signatures {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 24px;
-          margin-top: 48px;
-          padding-top: 24px;
-        }
-        @media (max-width: 700px) {
-          .rd-signatures { grid-template-columns: 1fr; }
-        }
-        .rd-sig-block { text-align: center; }
-        .rd-sig-line {
-          width: 100%;
-          height: 1px;
-          background: #333;
-          margin-bottom: 10px;
-          margin-top: 48px;
-        }
-        .rd-sig-name {
-          font-size: 13px;
-          font-weight: 800;
-          color: #111;
-          margin: 0 0 2px;
-        }
-        .rd-sig-title {
-          font-size: 11px;
-          font-weight: 600;
-          color: #666;
-          margin: 0;
-        }
-      `}</style>
-
       <div className="rd-page">
         <Navbar user={user} />
 
@@ -483,7 +165,7 @@ export default function ReportDetail({ user }) {
             </button>
             <button
               className="rd-export-btn"
-              disabled={exporting}
+              disabled={exporting || !reconciled}
               onClick={handleExportPDF}
             >
               {exporting && <span className="rd-spinner" />}
@@ -491,20 +173,41 @@ export default function ReportDetail({ user }) {
             </button>
           </div>
 
-          {/* Export error (shown outside printable area) */}
+          {canEdit(user, report) && (
+            <button
+              className="secondary-button"
+              onClick={() => navigate('/report/' + id + '/edit')}
+            >
+              Edit draft
+            </button>
+          )}
+          {!reconciled && (
+            <div className="error-banner" role="alert">
+              This report has missing or inconsistent amounts. Export is disabled until an
+              administrator reconciles it.
+            </div>
+          )}
+          <p className="helper-text">
+            Report {report.id} · {STATUS_LABELS[report.status] || report.status}
+          </p>
+          {/* Export error */}
           {exportError && (
-            <div className="rd-export-error">⚠ {exportError}</div>
+            <div className="rd-export-error" role="alert">
+              ⚠ {exportError}
+            </div>
           )}
 
           {/* ═══════════ PRINTABLE AREA ═══════════ */}
-          <div id="report-printable" ref={printRef} className="rd-print">
+          <div id="report-printable" className="rd-print">
             {/* ── Header: Two columns ── */}
             <div className="rd-header">
               {/* Left column */}
               <div>
                 <p className="rd-org-name">Tabba Heart Institute</p>
                 <p className="rd-org-dept">FMES Department</p>
-                <p className="rd-report-title">Expense Report</p>
+                <p className="rd-report-title">
+                  Expense Report — {STATUS_LABELS[report.status] || report.status}
+                </p>
                 <div className="rd-field-row">
                   <span className="rd-field-label">To:</span>
                   <span className="rd-field-value">Finance &amp; Accounts Department</span>
@@ -533,8 +236,13 @@ export default function ReportDetail({ user }) {
                   <span className="rd-summary-label">Less Expenses:</span>
                   <span className="rd-summary-value">{fmt(report.total_expenses)}</span>
                 </div>
-                <div className="rd-summary-row" style={{ marginTop: 6, paddingTop: 8, borderTop: '2px solid #eee' }}>
-                  <span className="rd-summary-label" style={{ fontWeight: 800, color: '#111' }}>Outstanding Balance:</span>
+                <div
+                  className="rd-summary-row"
+                  style={{ marginTop: 6, paddingTop: 8, borderTop: '2px solid #eee' }}
+                >
+                  <span className="rd-summary-label" style={{ fontWeight: 800, color: '#111' }}>
+                    Outstanding Balance:
+                  </span>
                   <span className="rd-summary-value bold">{fmt(report.outstanding_balance)}</span>
                 </div>
               </div>
@@ -566,7 +274,9 @@ export default function ReportDetail({ user }) {
                             <td>{item.description || '—'}</td>
                             <td>{item.section || '—'}</td>
                             <td>{item.category || '—'}</td>
-                            <td style={{ textAlign: 'right', fontFamily: "'Montserrat', monospace" }}>
+                            <td
+                              style={{ textAlign: 'right', fontFamily: "'Montserrat', monospace" }}
+                            >
                               {fmt(item.amount)}
                             </td>
                           </tr>
@@ -603,21 +313,43 @@ export default function ReportDetail({ user }) {
             <div className="rd-signatures">
               <div className="rd-sig-block">
                 <div className="rd-sig-line" />
-                <p className="rd-sig-name">Aftab Ahmed</p>
-                <p className="rd-sig-title">Senior Manager FMES</p>
+                <p className="rd-sig-name">{report.submitted_by}</p>
+                <p className="rd-sig-title">Prepared by</p>
               </div>
               <div className="rd-sig-block">
                 <div className="rd-sig-line" />
-                <p className="rd-sig-name">Zeeshan Ahmed</p>
+                <p className="rd-sig-name">
+                  {events.find((event) => event.to_status === 'hod_approved')?.actor_name ||
+                    'Awaiting approval'}
+                </p>
                 <p className="rd-sig-title">HOD FMES</p>
               </div>
               <div className="rd-sig-block">
                 <div className="rd-sig-line" />
-                <p className="rd-sig-name">Arshad Ghaffar</p>
+                <p className="rd-sig-name">
+                  {events.find((event) => event.to_status === 'cfo_approved')?.actor_name ||
+                    'Awaiting approval'}
+                </p>
                 <p className="rd-sig-title">CFO</p>
               </div>
             </div>
           </div>
+          {events.length > 0 && (
+            <section className="audit-history">
+              <h2>Report history</h2>
+              <ol>
+                {events.map((event) => (
+                  <li key={event.id}>
+                    {STATUS_LABELS[event.to_status] || event.to_status} by {event.actor_name} ·{' '}
+                    {new Date(event.created_at).toLocaleString('en-GB', {
+                      timeZone: 'Asia/Karachi',
+                    })}{' '}
+                    (Karachi)
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
         </div>
       </div>
     </>

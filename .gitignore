@@ -10,7 +10,15 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+test-results
+playwright-report
+coverage
 *.local
+
+# Environment variables — DO NOT commit to version control
+.env
+.env.local
+.env.*.local
 
 # Editor directories and files
 .vscode/*
