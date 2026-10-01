@@ -1,6 +1,6 @@
 # Review fixes — 1 October 2026
 
-All 13 findings have been addressed in the local project. **Database protections are not active in the live Supabase project until the migration is applied.** This workspace supplies only public frontend credentials, and no Supabase administration connection is configured.
+All 13 findings have been addressed. **Both database migrations were applied to the live Supabase project on 1 October 2026.** The CLI is linked, all four staff profiles are active, and production database checks passed in a transaction that was rolled back. No synthetic reports were retained.
 
 ## Fixes, in review order
 
@@ -31,18 +31,19 @@ All 13 findings have been addressed in the local project. **Database protections
 ## Verification
 
 - Clean npm installation: passed using the committed lockfile.
-- Database/unit/PDF tests: **15 passed**. Database tests run the actual migration in isolated PostgreSQL through PGlite, including rollback after a forced late insert failure, unauthorized writes, role transitions, ownership, stale edits, idempotency, and shared balances.
+- Database/unit/PDF tests: **16 passed**. Database tests run the actual migration in isolated PostgreSQL through PGlite, including rollback after a forced late insert failure, unauthorized writes, role transitions, ownership, stale edits, idempotency, and shared balances.
 - Browser tests: **8 passed** in headless Edge, with all external API requests intercepted. Covers invalid input, draft editing, lost-response recovery across reload, failed report/item loads, approvals, role restrictions, mobile width, and PDF download.
 - Lint: passed with warnings treated as errors.
 - Production build: passed. The initial application JavaScript chunk is about **443 kB**, down from about **1,189 kB** during the review. PDF code loads on export; exact output sizes depend on dependency versions and minification.
 - Dependency audit: **0 vulnerabilities** across production and development dependencies at verification time.
 - Visual export check: inspected an eight-page, 100-item PDF, including repeated headers, subtotals, final total, history, signatures, and page numbers; no clipping or overlap observed.
-- These checks ran locally without live database writes. The repository is connected to the existing GitHub project for deployment; the live database migration remains a separate prerequisite.
+- Live verification additionally exercised the deployed triggers, draft edits, idempotent retry, shared balance, ownership, direct-write denial, HOD/CFO transitions, outsider read denial, and audit history. Synthetic records were rolled back.
+- The live schema used a generated closing-balance column. A second migration retains its values as a normal numeric column so the atomic save function can write it; a regression test covers this upgrade.
 
-## Required deployment work
+## Deployment status
 
-Follow [SUPABASE_RLS_GUIDE.md](SUPABASE_RLS_GUIDE.md). Run the read-only preflight against the real database, check schema compatibility and existing privileged functions, back up the project, and apply [the migration](supabase/migrations/202610010001_secure_reports.sql) before deploying this frontend.
+The preflight found no existing reports or items and confirmed all four staff accounts. Existing triggers and privileged functions were inspected. An application data/schema snapshot was saved locally outside Git before applying both migrations. The linked migration history is current. See [SUPABASE_RLS_GUIDE.md](SUPABASE_RLS_GUIDE.md) for setup of other environments.
 
-An administrator must reconcile legacy ownership and any inconsistent historical reports before those reports can be edited or approved. Stage the backend/frontend rollout together: the old frontend's direct writes stop working once the secure migration is applied.
+No legacy ownership reconciliation was needed in this project because the report tables were empty. Other installations with historical reports must still reconcile ownership and amounts before approving them.
 
-Live signup settings and any existing backend functions/views outside this source tree still require inspection. Rejection/return-for-correction and receipt attachments remain product decisions, as identified in the review. Multilingual PDF text needs a suitable embedded font; the current export supports the existing English layout.
+Live signup settings still require a separate administration review. Existing public functions, triggers, and views were inspected during deployment. Rejection/return-for-correction and receipt attachments remain product decisions, as identified in the review. Multilingual PDF text needs a suitable embedded font; the current export supports the existing English layout.

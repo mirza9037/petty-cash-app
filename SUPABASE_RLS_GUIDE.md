@@ -1,12 +1,12 @@
 # Database setup and authorization
 
-The authoritative schema and access rules are in [202610010001_secure_reports.sql](supabase/migrations/202610010001_secure_reports.sql). The old email-based UPDATE and INSERT policies are replaced completely.
+The authoritative schema and access rules are in [202610010001_secure_reports.sql](supabase/migrations/202610010001_secure_reports.sql). Apply [202610010002_normalize_closing_balance.sql](supabase/migrations/202610010002_normalize_closing_balance.sql) afterward to support older installations with a generated closing-balance column. Existing values are preserved. The old email-based UPDATE and INSERT policies are replaced completely.
 
 ## Deployment order
 
 1. Back up the database using the project’s normal backup process.
-2. Run [preflight.sql](supabase/preflight.sql) in Supabase SQL Editor and inspect the results. Existing report/item IDs must be UUIDs; report_date must be a date; status must be text; monetary fields must be numeric; created_at must be timestamptz. If the deployed schema differs, adapt the migration against a staging copy before applying it. This workspace has no verified copy of the deployed schema.
-3. Run the migration once as the database owner, or apply it with Supabase CLI migrations. It is transactional: a failure rolls back the migration. It deliberately removes old policies on the five application tables and revokes direct client writes. Review any other existing SECURITY DEFINER functions returned by preflight: old write RPCs must be removed or secured too.
+2. Run [preflight.sql](supabase/preflight.sql) in Supabase SQL Editor and inspect the results. Existing report/item IDs must be UUIDs; report_date must be a date; status must be text; monetary fields must be numeric; created_at must be timestamptz. If the deployed schema differs, adapt the migration against a staging copy before applying it. Inspect generated-column metadata as well; the second migration normalizes older generated closing balances.
+3. Apply both migrations in filename order as the database owner, or use `supabase db push --linked`. It is transactional: a failure rolls back the migration. It deliberately removes old policies on the five application tables and revokes direct client writes. Review any other existing SECURITY DEFINER functions returned by preflight: old write RPCs must be removed or secured too.
 4. Confirm the four existing staff auth accounts have active profiles. Profiles are seeded only when the corresponding auth user already exists. Additional staff must be provisioned by an administrator; users cannot assign themselves roles.
 5. Reconcile legacy report ownership and incorrect amounts against reliable records. Existing names came from a client dropdown and are not reliable ownership evidence. The migration leaves created_by NULL for old records. These records remain readable to staff, but cannot be edited or approved until an administrator assigns verified ownership. Do not mass-assign owners solely from submitted_by.
 6. Deploy the matching frontend only after the migration succeeds. The old frontend relies on direct writes and will no longer save or approve after this migration. Schedule the backend/frontend release together.
@@ -38,3 +38,9 @@ Restrict public signup in Supabase Auth to your organization’s onboarding proc
 Run npm test. The database tests execute the real migration in isolated PGlite PostgreSQL, with auth.uid() and authenticated/anonymous roles supplied by the test harness. They test direct-write denial, approval bypasses, rollback, ownership, stale edits, retries, and shared balances. This is not a substitute for inspecting the deployed database or testing its existing triggers/functions.
 
 Do not use a Supabase service-role key in VITE_ environment variables. The frontend needs only the project URL and public anon/publishable key.
+
+## Deployment verification
+
+After linking the CLI, run `supabase db query --linked --file supabase/verify-deployment.sql`. It checks real database permissions, existing triggers, shared balances, draft editing, retries, and approval history using the four configured staff profiles. All test writes occur inside one transaction and are rolled back. Run in a maintenance window because the shared balance lock temporarily blocks other submissions.
+
+Both migrations and this verification passed on the production project on 1 October 2026. The database had no existing reports or items, so no legacy ownership reconciliation was needed.

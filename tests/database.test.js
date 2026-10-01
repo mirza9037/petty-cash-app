@@ -4,6 +4,39 @@ import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { PGlite } from '@electric-sql/pglite'
 const db = new PGlite()
+test('generated closing-balance upgrade preserves values and allows atomic saves', async () => {
+  const legacy = new PGlite()
+  try {
+    await legacy.exec(`
+      create role anon; create role authenticated; create schema auth;
+      create table auth.users(id uuid primary key,email text);
+      create function auth.uid() returns uuid language sql stable as $$
+        select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+      grant usage on schema auth to authenticated;
+      insert into auth.users values('11111111-1111-4111-8111-111111111111','aftab@thi.com');
+    `)
+    await legacy.exec(readFileSync(new URL('../supabase/migrations/202610010001_secure_reports.sql', import.meta.url), 'utf8'))
+    await legacy.exec(`
+      alter table public.expense_reports drop column outstanding_balance;
+      alter table public.expense_reports add column outstanding_balance numeric
+        generated always as (prev_balance+cash_received-total_expenses) stored;
+      insert into public.expense_reports(report_date,submitted_by,hod,institution,prev_balance,cash_received,total_expenses)
+        values('2026-10-01','Legacy','HOD','THI',25,100,10);
+    `)
+    await legacy.exec(readFileSync(new URL('../supabase/migrations/202610010002_normalize_closing_balance.sql', import.meta.url), 'utf8'))
+    assert.equal((await legacy.query('select outstanding_balance from public.expense_reports')).rows[0].outstanding_balance, '115')
+    await legacy.exec(`
+      select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',false);
+      set role authenticated;
+    `)
+    const result = await legacy.query('select public.save_expense_report($1,$2,null,$3,$4) as report', [
+      randomUUID(), randomUUID(), JSON.stringify(header()), JSON.stringify(items),
+    ])
+    assert.equal(Number(result.rows[0].report.outstanding_balance), 899.75)
+  } finally {
+    await legacy.close()
+  }
+})
 const users = {
   creator: '11111111-1111-4111-8111-111111111111',
   second: '22222222-2222-4222-8222-222222222222',
@@ -31,6 +64,7 @@ before(async () => {
       'utf8',
     ),
   )
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610010002_normalize_closing_balance.sql', import.meta.url), 'utf8'))
 })
 after(() => db.close())
 beforeEach(() => db.exec('begin'))

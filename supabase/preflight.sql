@@ -1,5 +1,5 @@
 -- Read-only checks to run in Supabase SQL Editor before applying the migration.
-select table_name,column_name,data_type,column_default,is_nullable
+select table_name,column_name,data_type,column_default,is_nullable,is_generated,generation_expression
 from information_schema.columns
 where table_schema='public' and table_name in ('expense_reports','expense_items','profiles')
 order by table_name,ordinal_position;

@@ -1,6 +1,6 @@
 # Petty Cash App — project review
 
-> This is the original review. The subsequent implementation and verification status is recorded in [FIXES.md](FIXES.md). All 13 findings have local code fixes; the database migration still requires deployment and legacy-data reconciliation.
+> This is the original review. The subsequent implementation and verification status is recorded in [FIXES.md](FIXES.md). All 13 findings have code fixes. Both database migrations were subsequently applied and verified on the live project; no legacy reports required reconciliation.
 
 Reviewed 1 October 2026. Scope: all application source, assets, package manifests, deployment configuration, README, and the Supabase policy guide. Functional and security reviews were performed by separate general review agents because the dedicated Bugbot/Security Review tools were unavailable.
 
