@@ -44,3 +44,9 @@ Do not use a Supabase service-role key in VITE_ environment variables. The front
 After linking the CLI, run `supabase db query --linked --file supabase/verify-deployment.sql`. It checks real database permissions, existing triggers, shared balances, draft editing, retries, and approval history using the four configured staff profiles. All test writes occur inside one transaction and are rolled back. Run in a maintenance window because the shared balance lock temporarily blocks other submissions.
 
 Both migrations and this verification passed on the production project on 1 October 2026. The database had no existing reports or items, so no legacy ownership reconciliation was needed.
+
+## Recovery and future-date migration
+
+Apply migrations in filename order, including 202610050001_recovery_and_submission_dates.sql. This replaces the save RPC to reject future submitted dates and adds the owner-restricted resolve_report_save RPC. It checks or cancels an uncertain request while holding the same advisory lock used by saving. Cancellation records stop late retries. No financial records are deleted when a request is discarded.
+
+Before rollout, check for existing non-draft reports dated beyond the current Karachi date. If any exist, reconcile those dates against source records; the migration intentionally does not rewrite historical reports. Apply this migration before the updated frontend and run verify-deployment.sql.

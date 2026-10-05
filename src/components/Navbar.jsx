@@ -8,7 +8,7 @@ export default function Navbar({ user, beforeLeave }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const handleLogout = async () => {
-    if (beforeLeave && !beforeLeave()) return
+    if (beforeLeave && !(await beforeLeave())) return
     setBusy(true)
     setError('')
     try {

@@ -4,7 +4,7 @@ import { canEdit } from '../lib/roles'
 import { SECTIONS, today } from '../lib/domain'
 import { previewPaisa, formatMoney } from '../lib/money'
 import { reportSchema, lineItemsSchema, validate } from '../lib/validation'
-import { loadReport, loadSummary, saveReport, errorMessage } from '../lib/reports'
+import { loadReport, loadSummary, saveReport, resolveSave, errorMessage } from '../lib/reports'
 import Navbar from '../components/Navbar'
 const emptyRow = () => ({
   key: crypto.randomUUID(),
@@ -26,7 +26,7 @@ export default function NewReport({ user }) {
   })
   const reportId = useRef(id || pending?.p_report_id || crypto.randomUUID())
   const request = useRef(pending)
-  const revision = useRef(null)
+  const revision = useRef(pending?.p_expected_revision ?? null)
   const [reportDate, setReportDate] = useState(pending?.p_header.report_date || today())
   const [prevBalance, setPrevBalance] = useState(pending?.p_header.prev_balance ?? '')
   const [cashReceived, setCashReceived] = useState(pending?.p_header.cash_received ?? '')
@@ -43,8 +43,21 @@ export default function NewReport({ user }) {
   const inFlight = useRef(false)
   useEffect(() => {
     const controller = new AbortController()
-    Promise.all([loadSummary(), id ? loadReport(id, controller.signal) : Promise.resolve(null)])
-      .then(([summary, loaded]) => {
+    const load = async () => {
+      if (pending) {
+        const recovery = await resolveSave(pending.p_request_id)
+        if (controller.signal.aborted) return null
+        if (recovery.status !== 'unknown') {
+          sessionStorage.removeItem(storageKey)
+          navigate(recovery.status === 'saved' ? '/report/' + recovery.report_id : '/dashboard', { replace: true })
+          return null
+        }
+      }
+      return Promise.all([loadSummary(), id ? loadReport(id, controller.signal) : Promise.resolve(null)])
+    }
+    load().then((result) => {
+        if (!result) return
+        const [summary, loaded] = result
         if (controller.signal.aborted) return
         setHasLedger(summary.outstanding_balance !== null)
         if (loaded) {
@@ -57,11 +70,16 @@ export default function NewReport({ user }) {
             return
           }
           reportId.current = id
-          revision.current = loaded.report.revision
-          setReportDate(loaded.report.report_date)
-          setPrevBalance(loaded.report.prev_balance)
-          setCashReceived(loaded.report.cash_received)
-          setItems(loaded.items.map((row) => ({ ...row, key: row.id })))
+          if (pending) {
+            if (pending.p_expected_revision !== loaded.report.revision)
+              setError('This draft changed since your failed save. Your recovered edits are retained, but cannot overwrite the newer revision. Review the saved report before discarding these edits.')
+          } else {
+            revision.current = loaded.report.revision
+            setReportDate(loaded.report.report_date)
+            setPrevBalance(loaded.report.prev_balance)
+            setCashReceived(loaded.report.cash_received)
+            setItems(loaded.items.map((row) => ({ ...row, key: row.id })))
+          }
         } else if (!pending) setPrevBalance(summary.outstanding_balance ?? '')
         setLoadError('')
       })
@@ -72,7 +90,7 @@ export default function NewReport({ user }) {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [id, user.id, user.staffRole, pending, retry])
+  }, [id, user.id, user.staffRole, pending, retry, navigate, storageKey])
   useEffect(() => {
     if (!dirty) return
     const warn = (event) => {
@@ -82,7 +100,36 @@ export default function NewReport({ user }) {
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
-  const leave = () => !dirty || window.confirm('Discard unsaved changes?')
+  const leave = async () => {
+    if (inFlight.current) return false
+    if (!dirty) return true
+    if (!window.confirm('Discard unsaved changes?')) return false
+    inFlight.current = true
+    setSaving('discard')
+    try {
+      if (request.current) {
+        const recovery = await resolveSave(request.current.p_request_id, true)
+        if (recovery.status === 'saved') {
+          sessionStorage.removeItem(storageKey)
+          setDirty(false)
+          window.alert('The save already completed. Opening the saved report; it has not been discarded.')
+          navigate('/report/' + recovery.report_id, { replace: true })
+          return false
+        }
+        if (recovery.status !== 'cancelled') throw new Error('Save could not be cancelled')
+      }
+      sessionStorage.removeItem(storageKey)
+      request.current = null
+      setDirty(false)
+      return true
+    } catch (failure) {
+      setError('Could not confirm whether the save completed. Your edits are retained. ' + errorMessage(failure))
+      return false
+    } finally {
+      inFlight.current = false
+      setSaving(null)
+    }
+  }
   const totalExpenses = useMemo(
     () => items.reduce((sum, row) => sum + previewPaisa(row.amount), 0) / 100,
     [items],
@@ -150,12 +197,23 @@ export default function NewReport({ user }) {
       p_items: lines.data,
     }
     const fingerprint = JSON.stringify(args)
-    if (request.current?.fingerprint !== fingerprint)
-      request.current = { ...args, p_request_id: crypto.randomUUID(), fingerprint }
-    const { fingerprint: _fingerprint, ...payload } = request.current
     inFlight.current = true
     setSaving(status)
     try {
+      if (request.current && request.current.fingerprint !== fingerprint) {
+        const recovery = await resolveSave(request.current.p_request_id, true)
+        if (recovery.status === 'saved') {
+          sessionStorage.removeItem(storageKey)
+          setDirty(false)
+          window.alert('The previous save already completed. Opening that report so you can review it before making further changes.')
+          navigate('/report/' + recovery.report_id, { replace: true })
+          return
+        }
+        if (recovery.status !== 'cancelled') throw new Error('Previous save is unresolved')
+      }
+      if (request.current?.fingerprint !== fingerprint)
+        request.current = { ...args, p_request_id: crypto.randomUUID(), fingerprint }
+      const { fingerprint: _fingerprint, ...payload } = request.current
       sessionStorage.setItem(storageKey, JSON.stringify(request.current))
       const saved = await saveReport(payload)
       sessionStorage.removeItem(storageKey)
@@ -173,7 +231,7 @@ export default function NewReport({ user }) {
   if (!canEdit(user))
     return (
       <>
-        <Navbar user={user} />
+        <Navbar user={user} beforeLeave={leave} />
         <main className="app-message" role="alert">
           Only creators can create and edit reports.
         </main>
@@ -182,9 +240,10 @@ export default function NewReport({ user }) {
   if (loading || loadError)
     return (
       <>
-        <Navbar user={user} />
+        <Navbar user={user} beforeLeave={leave} />
         <main className="app-message">
           <p role={loadError ? 'alert' : undefined}>{loadError || 'Loading report…'}</p>
+          {error && <p role="alert">{error}</p>}
           {loadError && (
             <button
               onClick={() => {
@@ -195,7 +254,7 @@ export default function NewReport({ user }) {
               Retry
             </button>
           )}
-          <button onClick={() => navigate('/dashboard')}>Back to dashboard</button>
+          <button onClick={async () => { if (await leave()) navigate('/dashboard') }}>Back to dashboard</button>
         </main>
       </>
     )
@@ -209,8 +268,8 @@ export default function NewReport({ user }) {
             <h1 className="nr-title">{id ? 'Edit Draft' : 'New Expense Report'}</h1>
             <button
               className="secondary-button"
-              onClick={() => {
-                if (leave()) navigate('/dashboard')
+              onClick={async () => {
+                if (await leave()) navigate('/dashboard')
               }}
             >
               Back to dashboard
@@ -221,6 +280,7 @@ export default function NewReport({ user }) {
                 ⚠ {error}
               </div>
             )}
+            {pending && id && <button className="secondary-button" onClick={() => navigate('/report/' + id)}>Review saved report</button>}
 
             {/* ═══════════ HEADER SECTION ═══════════ */}
             <div className="nr-card">

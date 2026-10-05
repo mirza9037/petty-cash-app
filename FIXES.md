@@ -47,3 +47,13 @@ The preflight found no existing reports or items and confirmed all four staff ac
 No legacy ownership reconciliation was needed in this project because the report tables were empty. Other installations with historical reports must still reconcile ownership and amounts before approving them.
 
 Live signup settings still require a separate administration review. Existing public functions, triggers, and views were inspected during deployment. Rejection/return-for-correction and receipt attachments remain product decisions, as identified in the review. Multilingual PDF text needs a suitable embedded font; the current export supports the existing English layout.
+
+## Follow-up review fixes — 5 October 2026
+
+- Reject future-dated submissions in the browser and the database using the Karachi calendar. Future drafts remain editable and cannot affect the shared ledger.
+- Restore failed draft edits with their original request ID and expected revision. Recover completed saves without resubmitting; retain edits and show a conflict when the saved draft has changed.
+- Discard reconciles uncertain saves before clearing recovery data. A request lock and cancellation record prevent a late retry from recreating a discarded save. If saving already completed, open the saved report and explain that it was preserved. Failed reconciliation retains edits.
+- Approval completion refreshes the dashboard through the current filter-dependent effect.
+- Added regression coverage for all four findings, stale recovery conflicts, committed-save recovery, cancellation ownership, and late retries.
+
+Migration 202610050001_recovery_and_submission_dates.sql was applied on 5 October 2026 before the frontend rollout. Production verification passed for date rejection, cancellation, late retries, recovery, balances, permissions and approvals; synthetic records were rolled back. No future-dated submitted reports required reconciliation. Local checks passed: 19 database/unit/PDF tests, 14 browser cases (two retested after a selector correction and a timing failure), lint and production build.

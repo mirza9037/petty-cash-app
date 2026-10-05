@@ -9,6 +9,7 @@ declare
   cfo uuid;
   test_report_id uuid := gen_random_uuid();
   request_id uuid := gen_random_uuid();
+  cancelled_request uuid := gen_random_uuid();
   saved jsonb;
   retried jsonb;
   header jsonb;
@@ -29,7 +30,30 @@ begin
   opening := coalesce((public.department_summary()->>'outstanding_balance')::numeric,0);
   header := jsonb_build_object('report_date',(now() at time zone 'Asia/Karachi')::date,
     'prev_balance',opening,'cash_received',1000,'status','draft');
+  denied := false;
+  begin
+    perform public.save_expense_report(gen_random_uuid(),gen_random_uuid(),null,
+      header || '{"status":"submitted","report_date":"9999-12-31"}'::jsonb,items);
+  exception when raise_exception then
+    if sqlerrm not like '%cannot be in the future%' then raise; end if;
+    denied := true;
+  end;
+  if not denied then raise exception 'Future submission was permitted'; end if;
+  if public.resolve_report_save(cancelled_request,true)->>'status'<>'cancelled' then
+    raise exception 'Discard did not cancel the unresolved request';
+  end if;
+  denied := false;
+  begin
+    perform public.save_expense_report(cancelled_request,gen_random_uuid(),null,header,items);
+  exception when raise_exception then
+    if sqlerrm not like '%already used%' then raise; end if;
+    denied := true;
+  end;
+  if not denied then raise exception 'Cancelled request was saved by a late retry'; end if;
   saved := public.save_expense_report(request_id,test_report_id,null,header,items);
+  if public.resolve_report_save(request_id,true)->>'report_id'<>test_report_id::text then
+    raise exception 'Committed save could not be recovered';
+  end if;
   retried := public.save_expense_report(request_id,test_report_id,null,header,items);
   if saved is distinct from retried then raise exception 'Idempotent retry failed'; end if;
   if (saved->>'total_expenses')::numeric<>100.25 or (saved->>'outstanding_balance')::numeric<>opening+899.75 then
@@ -100,4 +124,4 @@ begin
   end if;
 end $$;
 rollback;
-select 'Passed: draft, edit, retry, balances, ownership, permissions, HOD/CFO approvals and audit history. Test data rolled back.' as verification;
+select 'Passed: future-date rejection, discard/late retry, committed-save recovery, draft, edit, balances, ownership, permissions, HOD/CFO approvals and history. Test data rolled back.' as verification;

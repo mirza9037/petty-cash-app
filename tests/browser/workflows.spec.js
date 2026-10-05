@@ -36,6 +36,10 @@ async function setup(page, role = 'creator') {
     reportsFail: false,
     approvalFail: false,
     loseSaveResponse: false,
+    saveFail: false,
+    recoveryFail: false,
+    cancelled: new Set(),
+    approvalGate: null,
   }
   const user = {
     id: uid,
@@ -93,10 +97,23 @@ async function setup(page, role = 'creator') {
       return reply({ id: uid, role, display_name: 'Aftab Ahmed', active: true })
     if (url.pathname.endsWith('department_summary'))
       return reply({ outstanding_balance: 0, pending_approvals: 0, month_expenses: 0 })
+    if (url.pathname.endsWith('resolve_report_save')) {
+      if (state.recoveryFail) return reply({ message: 'offline' }, 503)
+      const args = request.postDataJSON()
+      const saved = state.requests.get(args.p_request_id)
+      if (saved) return reply({ status: 'saved', report_id: saved.id })
+      if (args.p_discard) state.cancelled.add(args.p_request_id)
+      return reply({ status: state.cancelled.has(args.p_request_id) ? 'cancelled' : 'unknown' })
+    }
     if (url.pathname.endsWith('save_expense_report')) {
       const args = request.postDataJSON()
       state.writes.push(args)
+      if (state.saveFail) return reply({ message: 'save failed before commit' }, 503)
+      if (state.cancelled.has(args.p_request_id)) return reply({ code: 'P0001', message: 'Request cancelled' }, 400)
       if (state.requests.has(args.p_request_id)) return reply(state.requests.get(args.p_request_id))
+      const existing = state.reports.find((r) => r.id === args.p_report_id)
+      if (existing && existing.revision !== args.p_expected_revision)
+        return reply({ code: '40001', message: 'Report changed or was submitted. Reload before saving.' }, 409)
       const saved = {
         ...baseReport,
         ...args.p_header,
@@ -122,6 +139,7 @@ async function setup(page, role = 'creator') {
     if (url.pathname.endsWith('approve_expense_report')) {
       const args = request.postDataJSON()
       state.writes.push(args)
+      if (state.approvalGate) await state.approvalGate
       if (state.approvalFail)
         return reply({ code: '40001', message: 'Report changed. Reload before approving.' }, 409)
       const report = state.reports.find((r) => r.id === args.p_report_id)
@@ -132,8 +150,9 @@ async function setup(page, role = 'creator') {
       if (state.reportsFail) return reply({ message: 'outage' }, 503, { 'retry-after': '0' })
       if (url.searchParams.has('id'))
         return reply(state.reports.find((r) => r.id === url.searchParams.get('id').slice(3)))
-      return reply(state.reports, 200, {
-        'content-range': '0-' + (state.reports.length - 1) + '/' + state.reports.length,
+      const rows = state.reports.filter((r) => !url.searchParams.has('status') || r.status === url.searchParams.get('status').slice(3))
+      return reply(rows, 200, {
+        'content-range': '0-' + (rows.length - 1) + '/' + rows.length,
         'access-control-expose-headers': 'content-range',
       })
     }
@@ -174,7 +193,7 @@ test('draft editor loads existing items and updates the same report', async ({ p
   expect(state.writes[0].p_expected_revision).toBe(1)
   expect(state.reports).toHaveLength(1)
 })
-test('lost save response can be retried without a duplicate report', async ({ page }) => {
+test('lost save response is recovered after reload without a duplicate report', async ({ page }) => {
   const state = await setup(page)
   state.reports = []
   state.loseSaveResponse = true
@@ -184,11 +203,113 @@ test('lost save response can be retried without a duplicate report', async ({ pa
   await page.getByRole('button', { name: 'Save as Draft' }).click()
   await expect(page.getByRole('alert')).toContainText('could not be completed')
   await page.reload()
-  await expect(page.getByLabel('Description row 1')).toHaveValue('Repair')
-  await page.getByRole('button', { name: 'Save as Draft' }).click()
   await expect(page.getByRole('button', { name: 'Export PDF' })).toBeEnabled()
   expect(state.reports).toHaveLength(1)
-  expect(state.writes[0].p_request_id).toBe(state.writes[1].p_request_id)
+  expect(state.writes).toHaveLength(1)
+})
+
+test('failed draft edits survive reload and retry with the same revision and request', async ({ page }) => {
+  const state = await setup(page)
+  state.saveFail = true
+  await page.goto('/report/' + reportId + '/edit')
+  await page.getByLabel('Description row 1').fill('Recovered edits')
+  await page.getByRole('button', { name: 'Save as Draft' }).click()
+  await expect(page.getByRole('alert')).toContainText('could not be completed')
+  await page.reload()
+  await expect(page.getByLabel('Description row 1')).toHaveValue('Recovered edits')
+  state.saveFail = false
+  await page.getByRole('button', { name: 'Save as Draft' }).click()
+  await expect(page.getByRole('button', { name: 'Export PDF' })).toBeEnabled()
+  expect(state.writes[1].p_request_id).toBe(state.writes[0].p_request_id)
+  expect(state.writes[1].p_expected_revision).toBe(1)
+})
+
+test('recovered edits cannot overwrite a newer draft revision', async ({ page }) => {
+  const state = await setup(page)
+  state.saveFail = true
+  await page.goto('/report/' + reportId + '/edit')
+  await page.getByLabel('Description row 1').fill('Recovered edits')
+  await page.getByRole('button', { name: 'Save as Draft' }).click()
+  await expect(page.getByRole('alert')).toBeVisible()
+  state.reports[0].revision = 2
+  state.items[0].description = 'Newer saved edits'
+  state.saveFail = false
+  await page.reload()
+  await expect(page.getByRole('alert')).toContainText('draft changed')
+  await expect(page.getByLabel('Description row 1')).toHaveValue('Recovered edits')
+  await page.getByRole('button', { name: 'Save as Draft' }).click()
+  await expect(page.getByRole('alert')).toContainText('Report changed')
+  expect(state.items[0].description).toBe('Newer saved edits')
+  expect(state.writes[1].p_expected_revision).toBe(1)
+})
+
+test('discard clears failed save recovery and starts a fresh report', async ({ page }) => {
+  const state = await setup(page)
+  state.saveFail = true
+  await page.goto('/report/new')
+  await page.getByLabel('Description row 1').fill('Discard me')
+  await page.getByLabel('Amount row 1').fill('10')
+  await page.getByRole('button', { name: 'Save as Draft' }).click()
+  await expect(page.getByRole('alert')).toBeVisible()
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Back to dashboard' }).click()
+  await page.getByRole('button', { name: 'New Report' }).click()
+  await expect(page.getByLabel('Description row 1')).toHaveValue('')
+  expect(state.cancelled.has(state.writes[0].p_request_id)).toBe(true)
+  state.saveFail = false
+  await page.getByLabel('Description row 1').fill('Fresh report')
+  await page.getByLabel('Amount row 1').fill('20')
+  await page.getByRole('button', { name: 'Save as Draft' }).click()
+  await expect(page.getByRole('button', { name: 'Export PDF' })).toBeEnabled()
+  expect(state.writes[1].p_report_id).not.toBe(state.writes[0].p_report_id)
+})
+
+test('discard retains recovery while offline and reveals a save that already committed', async ({ page }) => {
+  const state = await setup(page)
+  state.loseSaveResponse = true
+  await page.goto('/report/new')
+  await page.getByLabel('Description row 1').fill('Already saved')
+  await page.getByLabel('Amount row 1').fill('10')
+  await page.getByRole('button', { name: 'Save as Draft' }).click()
+  await expect(page.getByRole('alert')).toBeVisible()
+  page.on('dialog', (dialog) => dialog.accept())
+  state.recoveryFail = true
+  await page.getByRole('button', { name: 'Back to dashboard' }).click()
+  await expect(page.getByRole('alert')).toContainText('Your edits are retained')
+  await expect(page.getByLabel('Description row 1')).toHaveValue('Already saved')
+  state.recoveryFail = false
+  await page.getByRole('button', { name: 'Back to dashboard' }).click()
+  await expect(page.getByRole('button', { name: 'Export PDF' })).toBeEnabled()
+  expect(state.writes).toHaveLength(1)
+})
+
+test('future dates are rejected before submission writes', async ({ page }) => {
+  const state = await setup(page)
+  await page.goto('/report/new')
+  await page.getByLabel('Description row 1').fill('Repair')
+  await page.getByLabel('Amount row 1').fill('10')
+  await page.getByLabel('Dated').fill('9999-12-31')
+  await page.getByRole('button', { name: 'Submit for Approval' }).click()
+  await expect(page.getByRole('alert')).toContainText('cannot be in the future')
+  expect(state.writes).toHaveLength(0)
+})
+
+test('approval refresh respects filters changed while approval was pending', async ({ page }) => {
+  const state = await setup(page, 'hod')
+  state.reports[0].status = 'submitted'
+  let release
+  state.approvalGate = new Promise((resolve) => { release = resolve })
+  await page.goto('/dashboard')
+  await page.getByRole('button', { name: 'HOD Approve' }).click()
+  await expect.poll(() => state.writes.length).toBe(1)
+  await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('draft')
+  await expect(page.getByText('No reports match these filters.')).toBeVisible()
+  const refresh = page.waitForRequest((request) => request.url().includes('/expense_reports'))
+  release()
+  const refreshed = await refresh
+  expect(new URL(refreshed.url()).searchParams.get('status')).toBe('eq.draft')
+  await expect(page.getByText('No reports match these filters.')).toBeVisible()
+  await expect(page.locator('.dash-badge')).toHaveCount(0)
 })
 test('failed item load disables export until retry succeeds', async ({ page }) => {
   const state = await setup(page)

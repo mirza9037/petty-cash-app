@@ -46,3 +46,13 @@ export async function saveReport(args) {
   if (!data?.id) throw new Error('Save response was incomplete')
   return data
 }
+export async function resolveSave(requestId, discard = false) {
+  const { data, error } = await supabase.rpc('resolve_report_save', {
+    p_request_id: requestId,
+    p_discard: discard,
+  })
+  if (error) throw error
+  if (!['saved', 'cancelled', 'unknown'].includes(data?.status) ||
+      (data.status === 'saved' && !data.report_id)) throw new Error('Invalid recovery response')
+  return data
+}

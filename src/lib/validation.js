@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { toPaisa } from './money.js'
-import { SECTIONS } from './domain.js'
+import { SECTIONS, today } from './domain.js'
 const money = z.union([z.string(), z.number()]).transform((value, ctx) => {
   try {
     return toPaisa(value) / 100
@@ -23,6 +23,9 @@ export const reportSchema = z.object({
   prev_balance: money,
   cash_received: nonnegativeMoney,
   status: z.enum(['draft', 'submitted']),
+}).refine((report) => report.status !== 'submitted' || report.report_date <= today(), {
+  message: 'Submitted report date cannot be in the future (Karachi time).',
+  path: ['report_date'],
 })
 export const lineItemSchema = z.object({
   description: z.string().trim().min(1, 'Description is required.').max(500),

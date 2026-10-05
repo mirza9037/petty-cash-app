@@ -21,6 +21,7 @@ export default function Dashboard({ user }) {
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [refresh, setRefresh] = useState(0)
   const sequence = useRef(0)
   const approval = useRef(false)
   const fetchReports = useCallback(async () => {
@@ -60,7 +61,7 @@ export default function Dashboard({ user }) {
       // eslint-disable-next-line react-hooks/exhaustive-deps
       sequence.current++
     }
-  }, [fetchReports])
+  }, [fetchReports, refresh])
   const handleApprove = async (reportId, newStatus) => {
     if (approval.current) return
     approval.current = true
@@ -76,7 +77,8 @@ export default function Dashboard({ user }) {
       if (error) throw error
       if (data?.id !== reportId || data.status !== newStatus)
         throw new Error('Approval returned no changed record')
-      await fetchReports()
+      setLoading(true)
+      setRefresh((value) => value + 1)
     } catch (failure) {
       setActionError(errorMessage(failure))
     } finally {

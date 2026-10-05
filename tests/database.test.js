@@ -24,6 +24,7 @@ test('generated closing-balance upgrade preserves values and allows atomic saves
         values('2026-10-01','Legacy','HOD','THI',25,100,10);
     `)
     await legacy.exec(readFileSync(new URL('../supabase/migrations/202610010002_normalize_closing_balance.sql', import.meta.url), 'utf8'))
+    await legacy.exec(readFileSync(new URL('../supabase/migrations/202610050001_recovery_and_submission_dates.sql', import.meta.url), 'utf8'))
     assert.equal((await legacy.query('select outstanding_balance from public.expense_reports')).rows[0].outstanding_balance, '115')
     await legacy.exec(`
       select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',false);
@@ -65,6 +66,7 @@ before(async () => {
     ),
   )
   await db.exec(readFileSync(new URL('../supabase/migrations/202610010002_normalize_closing_balance.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610050001_recovery_and_submission_dates.sql', import.meta.url), 'utf8'))
 })
 after(() => db.close())
 beforeEach(() => db.exec('begin'))
@@ -244,4 +246,42 @@ test('database rejects fractional paisa, invalid sections and invalid calendar d
     /Invalid description/,
   )
   await denied(() => save({ data: { ...header(), report_date: '2026-02-30' } }), /out of range/)
+})
+
+test('future submissions cannot poison the shared ledger, including future drafts', async () => {
+  await login('creator')
+  const future = { ...header('submitted'), report_date: '9999-12-31' }
+  await denied(() => save({ data: future }), /cannot be in the future/)
+  const draft = await save({ data: { ...future, status: 'draft' } })
+  await denied(() => save({ id: draft.id, revision: draft.revision, data: future }), /cannot be in the future/)
+  const day = (await db.query("select (clock_timestamp() at time zone 'Asia/Karachi')::date::text as day")).rows[0].day
+  const first = await save({ data: { ...header('submitted'), report_date: day } })
+  await login('second')
+  const next = await save({ data: { ...header('submitted', first.outstanding_balance), report_date: day } })
+  assert.equal(next.status, 'submitted')
+})
+
+test('discard blocks late save retries and resolution is restricted to the owner', async () => {
+  const request = randomUUID()
+  const resolve = (discard) => db.query('select public.resolve_report_save($1,$2) as value', [request, discard])
+  await login('outsider')
+  await denied(() => resolve(true), /Only active creators/)
+  await login('creator')
+  assert.equal((await resolve(false)).rows[0].value.status, 'unknown')
+  assert.equal((await resolve(true)).rows[0].value.status, 'cancelled')
+  assert.equal((await resolve(true)).rows[0].value.status, 'cancelled')
+  await denied(() => save({ request }), /already used/)
+  await login('second')
+  await denied(() => resolve(false), /not owned/)
+  assert.equal((await db.query('select count(*)::int as n from public.expense_reports')).rows[0].n, 0)
+})
+
+test('discard reports a committed save without deleting or duplicating it', async () => {
+  await login('creator')
+  const request = randomUUID()
+  const report = await save({ request })
+  const result = await db.query('select public.resolve_report_save($1,true) as value', [request])
+  assert.deepEqual(result.rows[0].value, { status: 'saved', report_id: report.id })
+  assert.equal((await save({ request })).id, report.id)
+  assert.equal((await db.query('select count(*)::int as n from public.expense_reports')).rows[0].n, 1)
 })
