@@ -67,6 +67,7 @@ before(async () => {
   )
   await db.exec(readFileSync(new URL('../supabase/migrations/202610010002_normalize_closing_balance.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610050001_recovery_and_submission_dates.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610050002_excel_import.sql', import.meta.url), 'utf8'))
 })
 after(() => db.close())
 beforeEach(() => db.exec('begin'))
@@ -114,6 +115,54 @@ async function approve(report, status) {
   ])
   return result.rows[0].report
 }
+
+const importEntry = () => ({ request_id: randomUUID(), report_id: randomUUID(), header: header(), items })
+async function importBatch(entries) {
+  return (await db.query('select public.import_expense_reports($1) as result', [JSON.stringify(entries)])).rows[0].result
+}
+test('Excel import is atomic when a later report fails validation', async () => {
+  await login('creator')
+  const entries = [importEntry(), importEntry()].sort((a, b) => a.request_id.localeCompare(b.request_id))
+  entries[1].items = [{ ...items[0], amount: -1 }]
+  await denied(() => importBatch(entries), /Invalid description/)
+  assert.equal((await db.query('select count(*)::int as n from public.expense_reports')).rows[0].n, 0)
+  await db.exec('reset role')
+  assert.equal((await db.query('select count(*)::int as n from public.report_save_requests')).rows[0].n, 0)
+})
+test('Excel import retries reuse drafts, cannot change owners or bypass approvals', async () => {
+  await login('creator')
+  const entries = [importEntry(), importEntry()]
+  entries[0].header.created_by = users.second
+  entries[0].header.submitted_by = 'Forged'
+  const first = await importBatch(entries)
+  assert.deepEqual(await importBatch(entries), first)
+  const rows = (await db.query('select * from public.expense_reports')).rows
+  assert.equal(rows.length, 2)
+  assert.ok(rows.every((r) => r.created_by === users.creator && r.status === 'draft' && r.submitted_by !== 'Forged'))
+  assert.equal((await db.query('select count(*)::int as n from public.report_events')).rows[0].n, 2)
+  const summary = (await db.query('select public.department_summary() as summary')).rows[0].summary
+  assert.equal(summary.outstanding_balance, null)
+  for (const status of ['submitted', 'hod_approved', 'cfo_approved'])
+    await denied(() => importBatch([{ ...importEntry(), header: header(status) }]), /must create drafts/)
+  await login('second')
+  await denied(() => importBatch(entries), /different data/)
+  await denied(() => importBatch([{ ...importEntry(), report_id: rows[0].id }]), /not owned/)
+  await login('creator')
+  await denied(() => importBatch([{ ...importEntry(), report_id: rows[0].id }]), /Report changed/)
+})
+test('Excel import enforces role, batch limits and unique IDs', async () => {
+  for (const role of ['hod', 'cfo', 'outsider']) {
+    await login(role)
+    await denied(() => importBatch([importEntry()]), /Only active creators/)
+  }
+  await login('creator')
+  await denied(() => importBatch([]), /between 1 and 50/)
+  await denied(() => importBatch(Array.from({ length: 51 }, importEntry)), /between 1 and 50/)
+  const entry = importEntry()
+  await denied(() => importBatch([entry, entry]), /Duplicate/)
+  await db.exec('reset role; set local role anon')
+  await denied(() => importBatch([entry]), /permission denied/)
+})
 test('direct writes and client role escalation are denied', async () => {
   await login('creator')
   await denied(

@@ -21,6 +21,16 @@ Requires Node.js 22.12 or newer (Node 22 LTS is used in CI).
 - Report detail requires successful header, item, and history loads. Inconsistent reports cannot be exported.
 - PDF exports include report ID, status, readable tables with repeated headers, and recorded approval history.
 
+## Excel import and export
+
+Open **Excel import / export** from the dashboard. All active staff can download an `.xlsx` containing all accessible reports and their expense lines, including drafts. Export ignores dashboard filters, paginates beyond the API row limit, and includes numeric PKR amounts, status, owner, report ID, revision and export time. Opening/closing balances are per report and must not be summed. Each report and its items are read together; a long export can span concurrent changes to different reports.
+
+Creators can download the import template, replace the example records, and fill **Reports** (one row per report) and **Items** (one row per expense). Match **Report Key** between sheets. Use `YYYY-MM-DD` or Excel dates, supported sections, and numeric amounts with at most two decimals. Upload `.xlsx` files up to 2 MB, with at most 50 reports and 100 expenses per report. A worker validates the workbook before showing a preview; formulas and special cells are rejected.
+
+Confirm **Import reports as drafts** to save the entire workbook in one transaction. The signed-in creator owns the drafts. Review each draft and refresh its opening balance before submitting through the existing approval workflow. Imports cannot overwrite existing reports, set approval status, change ownership or directly change the shared balance. Identical keys and normalized contents uploaded by the same account reuse deterministic request IDs, including after a lost response or page reload. Changing a key or contents creates a new draft. Exports are reference workbooks; use the separate template for imports.
+
+Apply `supabase/migrations/202610050002_excel_import.sql` before deploying the Excel UI. ExcelJS is loaded with the Excel page; its compatible UUID dependency is pinned to 11.1.1 to address the published advisory.
+
 ## Checks
 
 - npm test — PostgreSQL authorization/transaction tests plus money, calendar, grouping, and PDF tests.

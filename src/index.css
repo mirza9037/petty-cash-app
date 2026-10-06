@@ -5,6 +5,13 @@
   --border: #e0e0e0;
   --font: 'Montserrat', 'Segoe UI', system-ui, sans-serif;
 }
+.excel-transfer > .nr-card { margin-top: 24px; }
+.excel-transfer p { line-height: 1.6; }
+.excel-file-label { display: block; margin: 24px 0 8px; font-weight: 600; }
+.excel-preview { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; }
+.excel-preview summary { cursor: pointer; line-height: 1.6; overflow-wrap: anywhere; }
+.excel-transfer input[type="file"] { max-width: 100%; }
+.dash-header { flex-wrap: wrap; gap: 12px; }
 /* ── Minimal reset — petty cash app ─────────────────────────────────────── */
 *,
 *::before,

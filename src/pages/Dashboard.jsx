@@ -94,6 +94,7 @@ export default function Dashboard({ user }) {
         <div className="dash-main">
           <div className="dash-header">
             <h1 className="dash-title">Dashboard</h1>
+            <button className="secondary-button" onClick={() => navigate('/excel')}>Excel import / export</button>
             {canEdit(user) && (
               <button className="dash-new-btn" onClick={() => navigate('/report/new')}>
                 <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> New Report

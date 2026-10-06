@@ -50,3 +50,9 @@ Both migrations and this verification passed on the production project on 1 Octo
 Apply migrations in filename order, including 202610050001_recovery_and_submission_dates.sql. This replaces the save RPC to reject future submitted dates and adds the owner-restricted resolve_report_save RPC. It checks or cancels an uncertain request while holding the same advisory lock used by saving. Cancellation records stop late retries. No financial records are deleted when a request is discarded.
 
 Before rollout, check for existing non-draft reports dated beyond the current Karachi date. If any exist, reconcile those dates against source records; the migration intentionally does not rewrite historical reports. Apply this migration before the updated frontend and run verify-deployment.sql.
+
+## Excel import migration
+
+Apply `202610050002_excel_import.sql` before deploying the Excel transfer page. `import_expense_reports` is a security-invoker RPC restricted to authenticated, active creators. It accepts 1–50 new drafts, rejects repeated request/report IDs, and calls the existing save function inside one transaction. It supplies no expected revision, so it cannot overwrite existing reports. Ownership, totals, audit events and idempotency remain enforced by `save_expense_report`. No table permissions or read policies change.
+
+Run `supabase db query --linked --file supabase/verify-excel.sql` after applying the migration. It verifies draft ownership, numeric totals, retry behavior, all-or-nothing rollback and approver denial, then rolls back all test records. Excel exports use the user's existing RLS-scoped connection, fetching reports with nested items and keyset pagination.

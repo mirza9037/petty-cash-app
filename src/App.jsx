@@ -6,6 +6,7 @@ import Login from './pages/Login'
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const NewReport = lazy(() => import('./pages/NewReport'))
 const ReportDetail = lazy(() => import('./pages/ReportDetail'))
+const ExcelTransfer = lazy(() => import('./pages/ExcelTransfer'))
 function Access({ session, children }) {
   if (session === undefined) return <p className="app-message">Loading…</p>
   if (!session) return <Navigate to="/login" replace />
@@ -113,6 +114,7 @@ export default function App() {
               element={session ? <Navigate to="/dashboard" replace /> : <Login />}
             />
             <Route path="/dashboard" element={protect(<Dashboard key={user?.id} user={user} />)} />
+            <Route path="/excel" element={protect(<ExcelTransfer key={user?.id} user={user} />)} />
             <Route
               path="/report/new"
               element={protect(<NewReport key={'new-' + user?.id} user={user} />)}

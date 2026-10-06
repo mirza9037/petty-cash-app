@@ -56,3 +56,35 @@ export async function resolveSave(requestId, discard = false) {
       (data.status === 'saved' && !data.report_id)) throw new Error('Invalid recovery response')
   return data
 }
+
+// Keyset pagination avoids the API row limit and keeps each report with its
+// items in one database statement. Never return a silently truncated export.
+export async function loadExportReports(client = supabase) {
+  const reports = []
+  let after = null
+  for (;;) {
+    let query = client.from('expense_reports').select('*,expense_items(*)').order('id').limit(100).retry(false)
+    if (after) query = query.gt('id', after)
+    const { data, error } = await query
+    if (error) throw error
+    if (!Array.isArray(data) || data.some((row) => !Array.isArray(row.expense_items)))
+      throw new Error('Export data is incomplete')
+    if (!data.length) return reports
+    if (after && data[0].id <= after) throw new Error('Export pagination did not advance')
+    reports.push(...data)
+    if (reports.length > 10000) throw new Error('Export exceeds 10,000 reports. Contact your administrator for a full export.')
+    after = data[data.length - 1].id
+    // Even a short page may reflect a server-configured cap, so fetch until empty.
+  }
+}
+
+export async function importReports(payload) {
+  const { data, error } = await supabase.rpc('import_expense_reports', { p_reports: payload })
+  if (error) throw error
+  if (!Array.isArray(data) || data.length !== payload.length || data.some((r) => !r.id))
+    throw new Error('Import response was incomplete')
+  const expected = new Set(payload.map((report) => report.report_id))
+  if (new Set(data.map((report) => report.id)).size !== expected.size || data.some((report) => !expected.has(report.id)))
+    throw new Error('Import response did not match the selected reports')
+  return data
+}
