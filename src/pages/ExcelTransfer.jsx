@@ -71,7 +71,10 @@ export default function ExcelTransfer({ user }) {
   const download = (all) => run('Preparing Excel download…', async () => {
     if (!all && (!from || !to || from > to)) throw new Error('Choose a start and end date in order.')
     const reports = await loadExportReports(undefined, all ? {} : { from, to })
-    if (!reports.length) { setNotice('No reports found for these dates. Choose another date range.'); return }
+    if (!reports.length) {
+      setNotice(all ? 'There are no records to download yet.' : 'No reports found for these dates. Choose another date range.')
+      return
+    }
     if (!alive.current) return
     exportController.current = new AbortController()
     const buffer = await prepareWorkbook(reports, all ? 'All records' : from + ' to ' + to + ' (inclusive report dates)', exportController.current.signal)

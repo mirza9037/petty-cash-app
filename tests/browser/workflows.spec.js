@@ -442,7 +442,7 @@ test('date downloads are inclusive; full downloads ignore date fields and includ
 })
 
 test('empty and reversed date ranges show a message without downloading', async ({ page }) => {
-  await setup(page)
+  const state = await setup(page)
   const downloads = []
   page.on('download', (d) => downloads.push(d))
   await page.goto('/excel')
@@ -454,6 +454,9 @@ test('empty and reversed date ranges show a message without downloading', async 
   await page.getByLabel('From date').fill('2020-01-01')
   await page.getByRole('button', { name: 'Download selected dates' }).click()
   await expect(page.getByRole('alert')).toContainText('start and end date in order')
+  state.reports = []
+  await page.getByRole('button', { name: 'Download all records' }).click()
+  await expect(page.getByRole('status')).toContainText('There are no records to download yet.')
   expect(downloads).toHaveLength(0)
 })
 
