@@ -169,6 +169,20 @@ async function setup(page, role = 'creator') {
       Object.assign(report, { status: args.p_status, revision: report.revision + 1 })
       return reply(report)
     }
+    if (url.pathname.endsWith('withdraw_expense_report')) {
+      const args = request.postDataJSON()
+      state.writes.push(args)
+      if (state.withdrawalFail) return reply({ code: 'P0001', message: 'A later report depends on this balance.' }, 400)
+      const report = state.reports.find((r) => r.id === args.p_report_id)
+      if (report.status === 'draft' && report.revision === args.p_expected_revision + 1) return reply(report)
+      if (report.revision !== args.p_expected_revision) return reply({ code: '40001', message: 'Report changed. Reload before withdrawing.' }, 409)
+      state.events.push({ id: 'withdrawal', actor_name: 'Aftab Ahmed', from_status: report.status,
+        to_status: 'draft', revision: report.revision + 1, created_at: new Date().toISOString(),
+        report_snapshot: { report: structuredClone(report), items: structuredClone(state.items) } })
+      Object.assign(report, { status: 'draft', submitted_at: null, revision: report.revision + 1 })
+      if (state.loseSaveResponse) { state.loseSaveResponse = false; return reply({ message: 'lost response' }, 503) }
+      return reply(report)
+    }
     if (url.pathname.endsWith('expense_reports')) {
       if (state.reportsFail) return reply({ message: 'outage' }, 503, { 'retry-after': '0' })
       if (url.searchParams.has('id'))
@@ -188,6 +202,63 @@ async function setup(page, role = 'creator') {
   })
   return state
 }
+
+test('creator withdraws an approved report with snapshot and cleared signatures', async ({ page }) => {
+  const state = await setup(page)
+  state.reports[0].status = 'cfo_approved'
+  state.reports[0].revision = 3
+  state.events = [{ id: 'h', to_status: 'hod_approved', actor_name: 'Previous HOD', revision: 2, created_at: baseReport.created_at },
+    { id: 'c', to_status: 'cfo_approved', actor_name: 'Previous CFO', revision: 3, created_at: baseReport.created_at }]
+  await page.goto('/report/' + reportId)
+  page.once('dialog', (dialog) => dialog.dismiss())
+  await page.getByRole('button', { name: 'Withdraw to draft' }).click()
+  expect(state.writes).toHaveLength(0)
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Withdraw to draft' }).click()
+  await expect(page.getByRole('button', { name: 'Edit draft' })).toBeVisible()
+  await expect(page.locator('.rd-signatures')).not.toContainText('Previous HOD')
+  await expect(page.locator('.rd-signatures')).not.toContainText('Previous CFO')
+  await expect(page.locator('.audit-history')).toContainText('Withdrawn from CFO Approved to Draft')
+  await page.getByText('Submitted details before withdrawal', { exact: true }).click()
+  await expect(page.locator('.audit-history')).toContainText('Pipe repair')
+  expect(state.writes[0]).toEqual({ p_report_id: reportId, p_expected_revision: 3 })
+})
+
+test('dashboard withdrawal recovers a lost response and shows blocked balance errors', async ({ page }) => {
+  const state = await setup(page)
+  state.reports[0].status = 'submitted'
+  state.withdrawalFail = true
+  await page.goto('/dashboard')
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Withdraw to draft' }).click()
+  await expect(page.getByRole('alert')).toContainText('later report depends')
+  expect(state.reports[0].status).toBe('submitted')
+  state.withdrawalFail = false
+  state.loseSaveResponse = true
+  await page.getByRole('button', { name: 'Withdraw to draft' }).click()
+  await expect(page.getByRole('alert')).toContainText('retry safely')
+  await page.getByRole('button', { name: 'Withdraw to draft' }).click()
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible()
+  expect(state.events).toHaveLength(1)
+  expect(state.writes[2]).toEqual(state.writes[1])
+})
+
+test('withdrawal controls are hidden for approvers and reports owned by another creator', async ({ page }) => {
+  const state = await setup(page, 'hod')
+  state.reports[0].status = 'submitted'
+  await page.goto('/report/' + reportId)
+  await expect(page.getByRole('button', { name: 'Export PDF' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Withdraw to draft' })).toHaveCount(0)
+})
+
+test('creator cannot withdraw another creator report through the UI', async ({ page }) => {
+  const state = await setup(page)
+  state.reports[0].status = 'submitted'
+  state.reports[0].created_by = 'another-creator'
+  await page.goto('/dashboard')
+  await expect(page.getByRole('button', { name: 'View', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Withdraw to draft' })).toHaveCount(0)
+})
 
 test('Excel template preview imports drafts and safely retries a lost response', async ({ page }, testInfo) => {
   test.setTimeout(90000)

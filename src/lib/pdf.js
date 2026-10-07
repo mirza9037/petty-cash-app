@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf'
 import { autoTable } from 'jspdf-autotable'
-import { groupItems, STATUS_LABELS, formatDate } from './domain.js'
+import { groupItems, STATUS_LABELS, formatDate, eventLabel } from './domain.js'
 import { formatMoney, sumMoney } from './money.js'
 
 export function buildReportPdf(report, items, events = []) {
@@ -75,7 +75,7 @@ export function buildReportPdf(report, items, events = []) {
       margin: { top: 20, bottom: 18, left: 14, right: 14 },
       head: [['Action', 'Staff member', 'Time (Karachi)']],
       body: events.map((event) => [
-        STATUS_LABELS[event.to_status] || event.to_status,
+        eventLabel(event),
         event.actor_name,
         new Date(event.created_at).toLocaleString('en-GB', { timeZone: 'Asia/Karachi' }),
       ]),

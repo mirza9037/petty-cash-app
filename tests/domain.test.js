@@ -1,9 +1,28 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { toPaisa, sumMoney } from '../src/lib/money.js'
-import { today, groupItems } from '../src/lib/domain.js'
+import { today, groupItems, currentApprover, eventLabel } from '../src/lib/domain.js'
 import { reportSchema, lineItemsSchema, validate } from '../src/lib/validation.js'
 import { buildReportPdf } from '../src/lib/pdf.js'
+
+test('withdrawal clears signatures and resubmission uses only fresh approvals', () => {
+  const events = [
+    { to_status: 'submitted', revision: 1 },
+    { to_status: 'hod_approved', revision: 2, actor_name: 'Old HOD' },
+    { to_status: 'cfo_approved', revision: 3, actor_name: 'Old CFO' },
+    { from_status: 'cfo_approved', to_status: 'draft', revision: 4 },
+    { to_status: 'submitted', revision: 5 },
+  ]
+  assert.equal(eventLabel(events[3]), 'Withdrawn from CFO Approved to Draft')
+  for (const status of ['draft', 'submitted']) {
+    assert.equal(currentApprover({ status }, events, 'hod_approved'), null)
+    assert.equal(currentApprover({ status }, events, 'cfo_approved'), null)
+  }
+  assert.equal(currentApprover({ status: 'hod_approved' }, events, 'hod_approved'), null)
+  events.push({ to_status: 'hod_approved', revision: 6, actor_name: 'New HOD' })
+  assert.equal(currentApprover({ status: 'hod_approved' }, events, 'hod_approved'), 'New HOD')
+  assert.equal(currentApprover({ status: 'hod_approved' }, events, 'cfo_approved'), null)
+})
 test('money is summed as integer paisa and rejects excess precision', () => {
   assert.equal(toPaisa('0.29'), 29)
   assert.equal(sumMoney([{ amount: 0.1 }, { amount: 0.2 }]), 0.3)

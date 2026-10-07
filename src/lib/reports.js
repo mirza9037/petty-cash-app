@@ -46,6 +46,15 @@ export async function saveReport(args) {
   if (!data?.id) throw new Error('Save response was incomplete')
   return data
 }
+export async function withdrawReport(report) {
+  const { data, error } = await supabase.rpc('withdraw_expense_report', {
+    p_report_id: report.id, p_expected_revision: report.revision,
+  })
+  if (error) throw error
+  if (data?.id !== report.id || data.status !== 'draft' || data.revision !== report.revision + 1)
+    throw new Error('Withdrawal response was incomplete')
+  return data
+}
 export async function resolveSave(requestId, discard = false) {
   const { data, error } = await supabase.rpc('resolve_report_save', {
     p_request_id: requestId,

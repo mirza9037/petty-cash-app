@@ -61,6 +61,8 @@ Use Vercel with the two public VITE_ variables configured. Apply the database mi
 
 ## Remaining product decisions
 
-Returning a submitted report for correction and storing receipt attachments require workflow/storage requirements. They are not silently enabled by this release. Standard PDF fonts cover the current English report layout; multilingual exports need an appropriate embedded font.
+Creators can use **Withdraw to draft** on their own submitted, HOD-approved or CFO-approved reports, from the dashboard or report details. Only the latest report in the shared ledger can be withdrawn; later reports must not depend on its closing balance. Confirmation removes its effect from department summaries and returns it to the draft editor. Previous approval events remain in history with an immutable snapshot of the submitted header and expense rows. Resubmission requires fresh HOD/CFO approvals. Stale actions fail; retrying a completed withdrawal does not create duplicate history or withdraw a later resubmission. Apply `202610070001_withdraw_reports.sql` before deploying this UI.
+
+Storing receipt attachments still requires workflow/storage requirements. Standard PDF fonts cover the current English report layout; multilingual exports need an appropriate embedded font.
 
 Internal system — authorized personnel only.

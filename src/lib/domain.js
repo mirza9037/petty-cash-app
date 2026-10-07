@@ -37,3 +37,15 @@ export function groupItems(items) {
   }
   return [...groups.values()]
 }
+export function eventLabel(event) {
+  return event.to_status === 'draft' && ['submitted', 'hod_approved', 'cfo_approved'].includes(event.from_status)
+    ? 'Withdrawn from ' + STATUS_LABELS[event.from_status] + ' to Draft'
+    : STATUS_LABELS[event.to_status] || event.to_status
+}
+export function currentApprover(report, events, status) {
+  if (status === 'hod_approved' && !['hod_approved', 'cfo_approved'].includes(report.status)) return null
+  if (status === 'cfo_approved' && report.status !== 'cfo_approved') return null
+  const submission = Math.max(0, ...events.filter((e) => e.to_status === 'submitted').map((e) => e.revision))
+  return events.filter((e) => e.to_status === status && e.revision > submission)
+    .sort((a, b) => b.revision - a.revision)[0]?.actor_name || null
+}

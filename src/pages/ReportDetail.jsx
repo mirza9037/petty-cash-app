@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import { loadReport, errorMessage } from '../lib/reports'
-import { groupItems, STATUS_LABELS, formatDate as fmtDate } from '../lib/domain'
+import { groupItems, STATUS_LABELS, formatDate as fmtDate, currentApprover, eventLabel } from '../lib/domain'
+import WithdrawReport from '../components/WithdrawReport'
 import { formatMoney as fmt, sumMoney, toPaisa } from '../lib/money'
 import { canEdit } from '../lib/roles'
 const EMPTY = []
@@ -181,6 +182,7 @@ export default function ReportDetail({ user }) {
               Edit draft
             </button>
           )}
+          <WithdrawReport user={user} report={report} onWithdrawn={() => { setResource(null); setRetry((v) => v + 1) }} />
           {!reconciled && (
             <div className="error-banner" role="alert">
               This report has missing or inconsistent amounts. Export is disabled until an
@@ -319,7 +321,7 @@ export default function ReportDetail({ user }) {
               <div className="rd-sig-block">
                 <div className="rd-sig-line" />
                 <p className="rd-sig-name">
-                  {events.find((event) => event.to_status === 'hod_approved')?.actor_name ||
+                  {currentApprover(report, events, 'hod_approved') ||
                     'Awaiting approval'}
                 </p>
                 <p className="rd-sig-title">HOD FMES</p>
@@ -327,7 +329,7 @@ export default function ReportDetail({ user }) {
               <div className="rd-sig-block">
                 <div className="rd-sig-line" />
                 <p className="rd-sig-name">
-                  {events.find((event) => event.to_status === 'cfo_approved')?.actor_name ||
+                  {currentApprover(report, events, 'cfo_approved') ||
                     'Awaiting approval'}
                 </p>
                 <p className="rd-sig-title">CFO</p>
@@ -340,11 +342,16 @@ export default function ReportDetail({ user }) {
               <ol>
                 {events.map((event) => (
                   <li key={event.id}>
-                    {STATUS_LABELS[event.to_status] || event.to_status} by {event.actor_name} ·{' '}
+                    {eventLabel(event)} by {event.actor_name} ·{' '}
                     {new Date(event.created_at).toLocaleString('en-GB', {
                       timeZone: 'Asia/Karachi',
                     })}{' '}
                     (Karachi)
+                    {event.report_snapshot && <details>
+                      <summary>Submitted details before withdrawal</summary>
+                      <p>Date: {fmtDate(event.report_snapshot.report.report_date)} · Expenses: {fmt(event.report_snapshot.report.total_expenses)} · Opening: {fmt(event.report_snapshot.report.prev_balance)} · Cash received: {fmt(event.report_snapshot.report.cash_received)} · Closing: {fmt(event.report_snapshot.report.outstanding_balance)}</p>
+                      <ul>{event.report_snapshot.items.map((item) => <li key={item.id}>{item.description} · {item.section} · {item.category} · {fmt(item.amount)}</li>)}</ul>
+                    </details>}
                   </li>
                 ))}
               </ol>

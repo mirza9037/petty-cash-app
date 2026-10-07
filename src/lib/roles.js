@@ -4,3 +4,5 @@ export const canEdit = (user, report) =>
   (!report || (report.status === 'draft' && report.created_by === user.id))
 export const canHodApprove = (user) => user?.staffRole === 'hod'
 export const canCfoApprove = (user) => user?.staffRole === 'cfo'
+export const canWithdraw = (user, report) => user?.staffRole === 'creator' &&
+  report?.created_by === user.id && ['submitted', 'hod_approved', 'cfo_approved'].includes(report.status)

@@ -68,6 +68,7 @@ before(async () => {
   await db.exec(readFileSync(new URL('../supabase/migrations/202610010002_normalize_closing_balance.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610050001_recovery_and_submission_dates.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610050002_excel_import.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610070001_withdraw_reports.sql', import.meta.url), 'utf8'))
 })
 after(() => db.close())
 beforeEach(() => db.exec('begin'))
@@ -115,6 +116,88 @@ async function approve(report, status) {
   ])
   return result.rows[0].report
 }
+
+async function withdraw(report) {
+  return (await db.query('select public.withdraw_expense_report($1,$2) as report', [report.id, report.revision])).rows[0].report
+}
+test('creator can withdraw at every approval stage, preserving submitted snapshot and safe retry', async () => {
+  for (const status of ['submitted', 'hod_approved', 'cfo_approved']) {
+    await login('creator')
+    let report = await save({ data: header('submitted') })
+    if (status !== 'submitted') { await login('hod'); report = await approve(report, 'hod_approved') }
+    if (status === 'cfo_approved') { await login('cfo'); report = await approve(report, 'cfo_approved') }
+    await login('creator')
+    const draft = await withdraw(report)
+    assert.equal(draft.status, 'draft')
+    assert.equal(draft.submitted_at, null)
+    assert.equal(draft.revision, report.revision + 1)
+    assert.deepEqual(await withdraw(report), draft)
+    const audit = (await db.query('select * from public.report_events where report_id=$1 and revision=$2', [report.id, draft.revision])).rows
+    assert.equal(audit.length, 1)
+    assert.equal(audit[0].from_status, status)
+    assert.equal(audit[0].report_snapshot.report.status, status)
+    assert.equal(audit[0].report_snapshot.items.length, 1)
+    await save({ id: draft.id, revision: draft.revision, lines: [{ ...items[0], description: 'Corrected', amount: 3 }] })
+    const snapshot = (await db.query('select report_snapshot from public.report_events where report_id=$1 and revision=$2', [report.id, draft.revision])).rows[0].report_snapshot
+    assert.equal(snapshot.items[0].description, 'Pipe repair')
+    assert.equal(snapshot.items[0].amount, 100.25)
+    await denied(() => withdraw(report), /Report changed/)
+    assert.equal((await db.query('select public.department_summary() as s')).rows[0].s.outstanding_balance, null)
+  }
+})
+test('withdrawal restores the previous shared balance and blocks dependent reports', async () => {
+  await login('creator')
+  const first = await save({ data: header('submitted') })
+  await login('second')
+  const second = await save({ data: header('submitted', first.outstanding_balance) })
+  await login('creator')
+  await denied(() => withdraw(first), /later report depends/)
+  await login('second')
+  await withdraw(second)
+  const summary = (await db.query('select public.department_summary() as s')).rows[0].s
+  assert.equal(Number(summary.outstanding_balance), first.outstanding_balance)
+  assert.equal(summary.pending_approvals, 1)
+  await login('creator')
+  await withdraw(first)
+  assert.equal((await db.query('select public.department_summary() as s')).rows[0].s.outstanding_balance, null)
+})
+test('withdrawal rejects other creators, approvers, inactive users, anonymous calls and stale revisions', async () => {
+  await login('creator')
+  const report = await save({ data: header('submitted') })
+  await login('second')
+  await denied(() => withdraw(report), /Only the creator/)
+  for (const role of ['hod', 'cfo', 'outsider']) {
+    await login(role)
+    await denied(() => withdraw(report), /Only active creators/)
+  }
+  await login('creator')
+  await denied(() => withdraw({ ...report, revision: null }), /Report changed/)
+  await denied(() => withdraw({ ...report, revision: report.revision - 1 }), /Report changed/)
+  await db.exec('reset role')
+  await db.query('update public.profiles set active=false where id=$1', [users.creator])
+  await login('creator')
+  await denied(() => withdraw(report), /Only active creators/)
+  await db.exec('reset role; set local role anon')
+  await denied(() => withdraw(report), /permission denied/)
+})
+test('withdrawn reports need fresh approvals and stale withdrawals cannot affect resubmission', async () => {
+  await login('creator')
+  const submitted = await save({ data: header('submitted') })
+  const draft = await withdraw(submitted)
+  await login('hod')
+  await denied(() => approve(submitted, 'hod_approved'), /Report changed/)
+  await denied(() => approve(draft, 'hod_approved'), /not permitted/)
+  await login('creator')
+  const resubmitted = await save({ id: draft.id, revision: draft.revision, data: header('submitted') })
+  await denied(() => withdraw(submitted), /Report changed/)
+  await login('cfo')
+  await denied(() => approve(resubmitted, 'cfo_approved'), /not permitted/)
+  await login('hod')
+  const approved = await approve(resubmitted, 'hod_approved')
+  await login('creator')
+  await denied(() => withdraw(resubmitted), /Report changed/)
+  assert.equal((await withdraw(approved)).status, 'draft')
+})
 
 const importEntry = () => ({ request_id: randomUUID(), report_id: randomUUID(), header: header(), items })
 async function importBatch(entries) {
