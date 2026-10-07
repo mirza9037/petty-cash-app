@@ -35,6 +35,8 @@ Workbook import validates the complete ZIP directory, rejects inconsistent entry
 
 ## Checks
 
+Administrator accounts use the administrator-managed `profiles.role = 'admin'` value. They can create/import reports, edit any staff draft without changing its owner, approve at HOD and CFO stages in order, and withdraw the latest submitted/approved report. Submitted financial fields remain locked until withdrawal. Existing revision checks, shared-balance rules and audit history still apply. Administrator actions are recorded under the administrator's identity. Apply `202610070002_administrator_role.sql` before assigning this role; passwords are managed in Supabase Auth and never stored in this repository.
+
 - npm test — PostgreSQL authorization/transaction tests plus money, calendar, grouping, and PDF tests.
 - npm run lint — lint warnings and errors fail the command.
 - npm run test:browser — browser regression tests with mocked Supabase responses; no live backend writes.

@@ -260,6 +260,25 @@ test('creator cannot withdraw another creator report through the UI', async ({ p
   await expect(page.getByRole('button', { name: 'Withdraw to draft' })).toHaveCount(0)
 })
 
+test('administrator edits staff drafts and can perform HOD and CFO approvals', async ({ page }) => {
+  const state = await setup(page, 'admin')
+  state.reports[0].created_by = 'another-creator'
+  state.reports[0].submitted_by = 'Idrees Ahmed'
+  await page.goto('/dashboard')
+  await expect(page.getByRole('button', { name: 'New Report' })).toBeVisible()
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await expect(page.getByLabel('Description row 1')).toHaveValue('Pipe repair')
+  await expect(page.getByLabel('Submitted By', { exact: true })).toHaveValue('Idrees Ahmed')
+  await page.getByRole('button', { name: 'Submit for Approval' }).click()
+  await page.getByRole('button', { name: 'Back to Dashboard' }).click()
+  await page.getByRole('button', { name: 'HOD Approve', exact: true }).click()
+  await page.getByRole('button', { name: 'CFO Approve', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Withdraw to draft' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'CFO Approved', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Excel import / export' }).click()
+  await expect(page.getByRole('button', { name: 'Download import template' })).toBeVisible()
+})
+
 test('Excel template preview imports drafts and safely retries a lost response', async ({ page }, testInfo) => {
   test.setTimeout(90000)
   const state = await setup(page)

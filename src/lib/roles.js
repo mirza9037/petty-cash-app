@@ -1,8 +1,8 @@
 // Loaded from the administrator-managed profiles table, never from editable user metadata.
 export const canEdit = (user, report) =>
-  user?.staffRole === 'creator' &&
-  (!report || (report.status === 'draft' && report.created_by === user.id))
-export const canHodApprove = (user) => user?.staffRole === 'hod'
-export const canCfoApprove = (user) => user?.staffRole === 'cfo'
-export const canWithdraw = (user, report) => user?.staffRole === 'creator' &&
-  report?.created_by === user.id && ['submitted', 'hod_approved', 'cfo_approved'].includes(report.status)
+  ['creator', 'admin'].includes(user?.staffRole) &&
+  (!report || (report.status === 'draft' && (report.created_by === user.id || user.staffRole === 'admin')))
+export const canHodApprove = (user) => ['hod', 'admin'].includes(user?.staffRole)
+export const canCfoApprove = (user) => ['cfo', 'admin'].includes(user?.staffRole)
+export const canWithdraw = (user, report) => ['creator', 'admin'].includes(user?.staffRole) &&
+  (report?.created_by === user.id || user?.staffRole === 'admin') && ['submitted', 'hod_approved', 'cfo_approved'].includes(report?.status)

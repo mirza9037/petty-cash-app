@@ -118,7 +118,7 @@ export default function ExcelTransfer({ user }) {
           </div>}
           {!!saved.length && <ul>{saved.map((report) => <li key={report.id}><Link to={'/report/' + report.id}>View {report.key}</Link></li>)}</ul>}
         </div>
-      </section> : <p>Excel import is available to creator accounts. You can download the records above.</p>}
+      </section> : <p>Excel import is available to creators and administrators. You can download the records above.</p>}
     </main>
   </div>
 }

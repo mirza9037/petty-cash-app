@@ -31,6 +31,8 @@ Do not deploy only the frontend: it requires the new profiles table and RPC func
 
 Manage public.profiles only through an administrator connection. Its id must match auth.users.id, role must be creator, hod, or cfo, and active controls access. Set display_name to the staff member’s verified name. Disable active before removing access; an email change does not change the user’s role.
 
+After `202610070002_administrator_role.sql`, `admin` is also an allowed profile role. It combines creator, HOD and CFO capabilities and permits editing/withdrawing other staff reports. It does not grant direct database writes, bypass approval order or permit withdrawal of older ledger entries. Report ownership remains unchanged when an administrator edits a staff draft; events identify the administrator as the actor. Request recovery remains restricted to the request actor. Create the Auth account through the server-side admin API, then explicitly assign its profile using an administrator database connection. Never grant this role from user-editable metadata.
+
 Restrict public signup in Supabase Auth to your organization’s onboarding process. Even if signup is enabled, new accounts without active profiles receive no application data access.
 
 ## Verification

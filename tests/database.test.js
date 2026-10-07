@@ -44,6 +44,7 @@ const users = {
   hod: '33333333-3333-4333-8333-333333333333',
   cfo: '44444444-4444-4444-8444-444444444444',
   outsider: '55555555-5555-4555-8555-555555555555',
+  admin: '66666666-6666-4666-8666-666666666666',
 }
 before(async () => {
   await db.exec(`create role anon; create role authenticated; create schema auth;
@@ -56,6 +57,7 @@ before(async () => {
     'zeeshan@thi.com',
     'arshad@thi.com',
     'outsider@example.com',
+    'admin@tabbaheart.org',
   ]
   for (const [i, id] of Object.values(users).entries())
     await db.query('insert into auth.users values($1,$2)', [id, emails[i]])
@@ -69,6 +71,8 @@ before(async () => {
   await db.exec(readFileSync(new URL('../supabase/migrations/202610050001_recovery_and_submission_dates.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610050002_excel_import.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070001_withdraw_reports.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610070002_administrator_role.sql', import.meta.url), 'utf8'))
+  await db.query("insert into public.profiles(id,email,role,display_name) values($1,'admin@tabbaheart.org','admin','Administrator')", [users.admin])
 })
 after(() => db.close())
 beforeEach(() => db.exec('begin'))
@@ -120,6 +124,45 @@ async function approve(report, status) {
 async function withdraw(report) {
   return (await db.query('select public.withdraw_expense_report($1,$2) as report', [report.id, report.revision])).rows[0].report
 }
+
+test('administrator manages staff drafts, both approvals and withdrawal without changing ownership', async () => {
+  await login('creator')
+  const created = await save()
+  await login('admin')
+  const edited = await save({ id: created.id, revision: created.revision, lines: [{ ...items[0], amount: 20 }] })
+  assert.equal(edited.created_by, users.creator)
+  assert.equal(edited.submitted_by, created.submitted_by)
+  const submitted = await save({ id: edited.id, revision: edited.revision, data: header('submitted') })
+  await denied(() => approve(submitted, 'cfo_approved'), /not permitted/)
+  const hodApproved = await approve(submitted, 'hod_approved')
+  const cfoApproved = await approve(hodApproved, 'cfo_approved')
+  const draft = await withdraw(cfoApproved)
+  assert.equal(draft.status, 'draft')
+  assert.deepEqual(await withdraw(cfoApproved), draft)
+  assert.equal(draft.created_by, users.creator)
+  const events = (await db.query('select actor_id from public.report_events where report_id=$1 order by revision', [draft.id])).rows
+  assert.ok(events.slice(1).every((e) => e.actor_id === users.admin))
+  await denied(() => db.exec("update public.profiles set role='admin'"), /permission denied/)
+  await denied(() => db.exec("delete from public.expense_reports"), /permission denied/)
+})
+
+test('administrator creates, imports and recovers own saves; inactivity revokes access', async () => {
+  await login('admin')
+  const request = randomUUID()
+  const created = await save({ request })
+  assert.equal(created.created_by, users.admin)
+  assert.equal(created.submitted_by, 'Administrator')
+  const recovered = (await db.query('select public.resolve_report_save($1,false) as result', [request])).rows[0].result
+  assert.equal(recovered.report_id, created.id)
+  assert.equal((await importBatch([importEntry()])).length, 1)
+  await login('creator')
+  await denied(() => save({ id: created.id, revision: created.revision }), /not owned/)
+  await db.exec('reset role')
+  await db.query('update public.profiles set active=false where id=$1', [users.admin])
+  await login('admin')
+  await denied(() => save(), /Only active/)
+  await denied(() => importBatch([importEntry()]), /Only active/)
+})
 test('creator can withdraw at every approval stage, preserving submitted snapshot and safe retry', async () => {
   for (const status of ['submitted', 'hod_approved', 'cfo_approved']) {
     await login('creator')

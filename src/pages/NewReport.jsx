@@ -28,6 +28,7 @@ export default function NewReport({ user }) {
   const request = useRef(pending)
   const revision = useRef(pending?.p_expected_revision ?? null)
   const [reportDate, setReportDate] = useState(pending?.p_header.report_date || today())
+  const [submittedBy, setSubmittedBy] = useState(user.displayName || user.email)
   const [prevBalance, setPrevBalance] = useState(pending?.p_header.prev_balance ?? '')
   const [cashReceived, setCashReceived] = useState(pending?.p_header.cash_received ?? '')
   const [items, setItems] = useState(
@@ -61,15 +62,12 @@ export default function NewReport({ user }) {
         if (controller.signal.aborted) return
         setHasLedger(summary.outstanding_balance !== null)
         if (loaded) {
-          if (!(
-            user.staffRole === 'creator' &&
-            loaded.report.created_by === user.id &&
-            loaded.report.status === 'draft'
-          )) {
-            setLoadError('This report is not an editable draft owned by your account.')
+          if (!canEdit({ id: user.id, staffRole: user.staffRole }, loaded.report)) {
+            setLoadError('This report is not an editable draft available to your account.')
             return
           }
           reportId.current = id
+          setSubmittedBy(loaded.report.submitted_by)
           if (pending) {
             if (pending.p_expected_revision !== loaded.report.revision)
               setError('This draft changed since your failed save. Your recovered edits are retained, but cannot overwrite the newer revision. Review the saved report before discarding these edits.')
@@ -233,7 +231,7 @@ export default function NewReport({ user }) {
       <>
         <Navbar user={user} beforeLeave={leave} />
         <main className="app-message" role="alert">
-          Only creators can create and edit reports.
+          Only creators and administrators can create and edit reports.
         </main>
       </>
     )
@@ -325,7 +323,7 @@ export default function NewReport({ user }) {
                     <input
                       id="nr-submitted"
                       className="nr-input"
-                      value={user.displayName || user.email}
+                      value={submittedBy}
                       readOnly
                     />
                   </div>

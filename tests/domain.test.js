@@ -4,6 +4,20 @@ import { toPaisa, sumMoney } from '../src/lib/money.js'
 import { today, groupItems, currentApprover, eventLabel } from '../src/lib/domain.js'
 import { reportSchema, lineItemsSchema, validate } from '../src/lib/validation.js'
 import { buildReportPdf } from '../src/lib/pdf.js'
+import { canEdit, canHodApprove, canCfoApprove, canWithdraw } from '../src/lib/roles.js'
+
+test('admin combines report management and approver permissions without expanding normal roles', () => {
+  const admin = { id: 'admin', staffRole: 'admin' }
+  const creator = { id: 'creator', staffRole: 'creator' }
+  const draft = { created_by: 'someone-else', status: 'draft' }
+  assert.ok(canEdit(admin, draft))
+  assert.equal(canEdit(creator, draft), false)
+  assert.ok(canHodApprove(admin) && canCfoApprove(admin))
+  assert.equal(canHodApprove(creator), false)
+  assert.equal(canCfoApprove(creator), false)
+  assert.ok(canWithdraw(admin, { ...draft, status: 'cfo_approved' }))
+  assert.equal(canEdit(admin, { ...draft, status: 'submitted' }), false)
+})
 
 test('withdrawal clears signatures and resubmission uses only fresh approvals', () => {
   const events = [
