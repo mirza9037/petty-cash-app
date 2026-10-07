@@ -7,6 +7,7 @@ import { formatMoney as fmt } from '../lib/money'
 import { loadSummary, errorMessage } from '../lib/reports'
 import Navbar from '../components/Navbar'
 import WithdrawReport from '../components/WithdrawReport'
+import DeleteDraft from '../components/DeleteDraft'
 const PAGE_SIZE = 25
 export default function Dashboard({ user }) {
   const navigate = useNavigate()
@@ -275,6 +276,7 @@ export default function Dashboard({ user }) {
                                 </button>
                               )}
                               <WithdrawReport user={user} report={report} onWithdrawn={() => { setLoading(true); setRefresh((v) => v + 1) }} />
+                              <DeleteDraft user={user} report={report} onDeleted={() => { setPage(0); setLoading(true); setRefresh((v) => v + 1) }} />
 
                               {showHodApprove && (
                                 <button

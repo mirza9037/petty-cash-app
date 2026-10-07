@@ -55,6 +55,15 @@ export async function withdrawReport(report) {
     throw new Error('Withdrawal response was incomplete')
   return data
 }
+export async function deleteDraft(report) {
+  const { data, error } = await supabase.rpc('delete_draft_report', {
+    p_report_id: report.id, p_expected_revision: report.revision,
+  })
+  if (error) throw error
+  if (data?.id !== report.id || data.deleted !== true || data.revision !== report.revision + 1)
+    throw new Error('Deletion response was incomplete')
+  return data
+}
 export async function resolveSave(requestId, discard = false) {
   const { data, error } = await supabase.rpc('resolve_report_save', {
     p_request_id: requestId,

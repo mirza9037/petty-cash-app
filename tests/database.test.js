@@ -72,6 +72,7 @@ before(async () => {
   await db.exec(readFileSync(new URL('../supabase/migrations/202610050002_excel_import.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070001_withdraw_reports.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070002_administrator_role.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610070003_delete_drafts.sql', import.meta.url), 'utf8'))
   await db.query("insert into public.profiles(id,email,role,display_name) values($1,'admin@tabbaheart.org','admin','Administrator')", [users.admin])
 })
 after(() => db.close())
@@ -124,6 +125,71 @@ async function approve(report, status) {
 async function withdraw(report) {
   return (await db.query('select public.withdraw_expense_report($1,$2) as report', [report.id, report.revision])).rows[0].report
 }
+
+async function removeDraft(report) {
+  return (await db.query('select public.delete_draft_report($1,$2) as result', [report.id, report.revision])).rows[0].result
+}
+test('draft deletion enforces ownership, roles, revision and submitted status', async () => {
+  await login('creator')
+  const draft = await save()
+  await db.exec('set local role anon')
+  await denied(() => removeDraft(draft), /permission denied/)
+  await login('second')
+  await denied(() => removeDraft(draft), /belongs to another/)
+  for (const role of ['hod', 'cfo', 'outsider']) {
+    await login(role)
+    await denied(() => removeDraft(draft), /Only active/)
+  }
+  await login('creator')
+  await denied(() => removeDraft({ ...draft, revision: 0 }), /changed or was submitted/)
+  const submitted = await save({ id: draft.id, revision: draft.revision, data: header('submitted') })
+  await denied(() => removeDraft(submitted), /changed or was submitted/)
+  await db.exec('reset role')
+  await db.query('update public.profiles set active=false where id=$1', [users.creator])
+  await login('creator')
+  await denied(() => removeDraft(submitted), /Only active/)
+})
+test('deleted drafts disappear from all staff reads and cannot be resurrected by retries', async () => {
+  await login('creator')
+  const request = randomUUID(), id = randomUUID()
+  const draft = await save({ request, id })
+  const summary = (await db.query('select public.department_summary() as result')).rows[0].result
+  const removed = await removeDraft(draft)
+  assert.deepEqual(removed, { id, deleted: true, revision: draft.revision + 1 })
+  assert.deepEqual(await removeDraft(draft), removed)
+  await denied(() => save({ request, id }), /has been deleted/)
+  await denied(() => db.query('select public.import_expense_reports($1)', [JSON.stringify([
+    { request_id: request, report_id: id, header: header(), items },
+  ])]), /has been deleted/)
+  await denied(() => save({ id, revision: draft.revision + 1 }), /has been deleted/)
+  assert.equal((await db.query('select public.resolve_report_save($1,false) as result', [request])).rows[0].result.status, 'cancelled')
+  for (const role of ['creator', 'second', 'hod', 'cfo', 'admin', 'outsider']) {
+    await login(role)
+    for (const table of ['expense_reports', 'expense_items', 'report_events']) {
+      const key = table === 'expense_reports' ? 'id' : 'report_id'
+      assert.equal((await db.query(`select * from public.${table} where ${key}=$1`, [id])).rows.length, 0)
+    }
+  }
+  await login('admin')
+  assert.deepEqual((await db.query('select public.department_summary() as result')).rows[0].result, summary)
+  await db.exec('reset role')
+  assert.equal((await db.query('select * from public.report_events where report_id=$1', [id])).rows.length, 1)
+  assert.equal((await db.query('select * from public.expense_items where report_id=$1', [id])).rows.length, 1)
+})
+test('administrator can delete another creator draft while preserving withdrawn snapshots', async () => {
+  await login('creator')
+  let report = await save({ data: header('submitted') })
+  await login('admin')
+  report = await approve(report, 'hod_approved')
+  report = await approve(report, 'cfo_approved')
+  report = await withdraw(report)
+  await removeDraft(report)
+  await denied(() => withdraw({ ...report, revision: report.revision - 1 }), /has been deleted/)
+  await db.exec('reset role')
+  const events = (await db.query('select * from public.report_events where report_id=$1', [report.id])).rows
+  assert.equal(events.length, 4)
+  assert.equal(events.find((e) => e.report_snapshot)?.report_snapshot.report.status, 'cfo_approved')
+})
 
 test('administrator manages staff drafts, both approvals and withdrawal without changing ownership', async () => {
   await login('creator')

@@ -35,6 +35,8 @@ Workbook import validates the complete ZIP directory, rejects inconsistent entry
 
 ## Checks
 
+Creators can delete their own drafts; administrators can delete any draft from the dashboard or report details. Apply `202610070003_delete_drafts.sql` before deploying this UI. Deletion removes the report, items and history from staff reads and Excel exports, while retaining them in the database with the deleting actor and timestamp. Submitted reports must be withdrawn first. Revision checks prevent deleting a report that changed, and safe retries cannot restore deleted reports or report a deleted Excel import as successful. There is no restore option in the app.
+
 Administrator accounts use the administrator-managed `profiles.role = 'admin'` value. They can create/import reports, edit any staff draft without changing its owner, approve at HOD and CFO stages in order, and withdraw the latest submitted/approved report. Submitted financial fields remain locked until withdrawal. Existing revision checks, shared-balance rules and audit history still apply. Administrator actions are recorded under the administrator's identity. Apply `202610070002_administrator_role.sql` before assigning this role; passwords are managed in Supabase Auth and never stored in this repository.
 
 - npm test — PostgreSQL authorization/transaction tests plus money, calendar, grouping, and PDF tests.

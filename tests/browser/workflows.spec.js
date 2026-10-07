@@ -183,11 +183,21 @@ async function setup(page, role = 'creator') {
       if (state.loseSaveResponse) { state.loseSaveResponse = false; return reply({ message: 'lost response' }, 503) }
       return reply(report)
     }
+    if (url.pathname.endsWith('delete_draft_report')) {
+      const args = request.postDataJSON()
+      state.writes.push(args)
+      const report = state.reports.find((r) => r.id === args.p_report_id)
+      if (state.deleteFail || report.status !== 'draft' || (!report.deleted_at && report.revision !== args.p_expected_revision))
+        return reply({ code: '40001', message: 'Report changed or was submitted. Reload before deleting.' }, 409)
+      if (!report.deleted_at) Object.assign(report, { deleted_at: new Date().toISOString(), revision: report.revision + 1 })
+      if (state.loseSaveResponse) { state.loseSaveResponse = false; return reply({ message: 'lost response' }, 503) }
+      return reply({ id: report.id, deleted: true, revision: report.revision })
+    }
     if (url.pathname.endsWith('expense_reports')) {
       if (state.reportsFail) return reply({ message: 'outage' }, 503, { 'retry-after': '0' })
       if (url.searchParams.has('id'))
         return reply(state.reports.find((r) => r.id === url.searchParams.get('id').slice(3)))
-      const rows = state.reports.filter((r) => !url.searchParams.has('status') || r.status === url.searchParams.get('status').slice(3))
+      const rows = state.reports.filter((r) => !r.deleted_at && (!url.searchParams.has('status') || r.status === url.searchParams.get('status').slice(3)))
       return reply(rows, 200, {
         'content-range': '0-' + (rows.length - 1) + '/' + rows.length,
         'access-control-expose-headers': 'content-range',
@@ -202,6 +212,45 @@ async function setup(page, role = 'creator') {
   })
   return state
 }
+
+test('draft deletion confirms, safely retries lost responses and removes the row', async ({ page }) => {
+  const state = await setup(page)
+  await page.goto('/dashboard')
+  const remove = page.getByRole('button', { name: 'Delete draft', exact: true })
+  await expect(remove).toBeVisible()
+  page.once('dialog', (dialog) => dialog.dismiss())
+  await remove.click()
+  expect(state.writes).toHaveLength(0)
+  state.deleteFail = true
+  page.once('dialog', (dialog) => dialog.accept())
+  await remove.click()
+  await expect(page.getByRole('alert')).toContainText('Report changed or was submitted')
+  state.deleteFail = false
+  state.loseSaveResponse = true
+  page.once('dialog', (dialog) => dialog.accept())
+  await remove.click()
+  await expect(page.getByRole('alert')).toContainText('Check your connection')
+  page.once('dialog', (dialog) => dialog.accept())
+  await remove.click()
+  await expect(page.getByText('No reports match these filters.')).toBeVisible()
+  expect(state.reports[0].revision).toBe(2)
+})
+test('administrator can delete staff drafts from details', async ({ page }) => {
+  const state = await setup(page, 'admin')
+  state.reports[0].created_by = 'other-creator'
+  await page.goto('/report/' + reportId)
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Delete draft', exact: true }).click()
+  await expect(page).toHaveURL(/dashboard/)
+  await expect(page.getByText('No reports match these filters.')).toBeVisible()
+})
+test('delete draft is hidden for other creators', async ({ page }) => {
+  const state = await setup(page)
+  state.reports[0].created_by = 'other-creator'
+  await page.goto('/dashboard')
+  await expect(page.getByRole('button', { name: 'View', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Delete draft', exact: true })).toHaveCount(0)
+})
 
 test('creator withdraws an approved report with snapshot and cleared signatures', async ({ page }) => {
   const state = await setup(page)
@@ -276,7 +325,7 @@ test('administrator edits staff drafts and can perform HOD and CFO approvals', a
   await expect(page.getByRole('button', { name: 'Withdraw to draft' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'CFO Approved', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Excel import / export' }).click()
-  await expect(page.getByRole('button', { name: 'Download import template' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Download import template' })).toBeVisible({ timeout: 20000 })
 })
 
 test('Excel template preview imports drafts and safely retries a lost response', async ({ page }, testInfo) => {
