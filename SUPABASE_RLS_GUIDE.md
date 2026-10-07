@@ -59,6 +59,12 @@ Apply `202610050002_excel_import.sql` before deploying the Excel transfer page. 
 
 Run `supabase db query --linked --file supabase/verify-excel.sql` after applying the migration. It verifies draft ownership, numeric totals, retry behavior, all-or-nothing rollback and approver denial, then rolls back all test records. Excel exports use the user's existing RLS-scoped connection, fetching reports with nested items and keyset pagination.
 
+## Historical Excel uploads
+
+Apply `202610070004_historical_excel.sql` after all earlier migrations. `import_historical_reports` requires an active creator or administrator and accepts at most 500 reports / 10,000 expense rows, with 1–100 rows per report. It validates historical dates, sections, money precision and totals, computes closing balances, and inserts immutable reports with status `historical`, the uploader's identity and an audit event. It never updates existing reports or invents approval events. A private receipt table binds retry IDs to actor and full content, with sorted transaction locks. Whole uploads roll back on any failure.
+
+Historical records use existing staff read policies and direct-write restrictions. They are excluded from shared balance, monthly submitted spending and pending approvals; existing save, approval, withdrawal and draft-deletion functions cannot change them. Report date indexes support filters across years. Verify with `supabase db query --linked --file supabase/verify-historical-excel.sql`; all test writes are rolled back.
+
 ## Creator withdrawal
 
 Apply `202610070001_withdraw_reports.sql`. Per the requested workflow, active creators can withdraw their own reports even after CFO approval, but only while the report is the latest non-draft entry in the shared ledger. The RPC locks the report, verifies its revision and owner, then takes the same ledger lock used by submission. It changes status to draft without changing financial fields, clears the submission timestamp, advances the revision, and records the prior report and items in `report_events.report_snapshot`, all in one transaction. Existing client write restrictions protect these snapshots.

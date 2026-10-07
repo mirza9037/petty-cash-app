@@ -100,7 +100,7 @@ async function setup(page, role = 'creator') {
       return reply({ id: uid, role, display_name: 'Aftab Ahmed', active: true })
     if (url.pathname.endsWith('department_summary'))
       return reply({ outstanding_balance: 0, pending_approvals: 0, month_expenses: 0 })
-    if (url.pathname.endsWith('import_expense_reports')) {
+    if (url.pathname.endsWith('import_historical_reports')) {
       const args = request.postDataJSON()
       state.writes.push(args)
       const result = args.p_reports.map((r) => ({ id: r.report_id }))
@@ -117,7 +117,10 @@ async function setup(page, role = 'creator') {
     if (url.pathname.endsWith('expense_reports') && url.searchParams.get('select')?.includes('expense_items')) {
       if (state.reportsFail) return reply({ message: 'outage' }, 503)
       const after = url.searchParams.get('id')?.replace('gt.', '')
-      return reply(state.reports.filter((r) => !after || r.id > after).sort((a, b) => a.id.localeCompare(b.id))
+      const dates = url.searchParams.getAll('report_date')
+      const from = dates.find((v) => v.startsWith('gte.'))?.slice(4)
+      const to = dates.find((v) => v.startsWith('lte.'))?.slice(4)
+      return reply(state.reports.filter((r) => !r.deleted_at && (!after || r.id > after) && (!from || r.report_date >= from) && (!to || r.report_date <= to)).sort((a, b) => a.id.localeCompare(b.id))
         .slice(0, Number(url.searchParams.get('limit'))).map((r) => ({ ...r, expense_items: state.items.filter((i) => i.report_id === r.id) })))
     }
     if (url.pathname.endsWith('resolve_report_save')) {
@@ -325,35 +328,35 @@ test('administrator edits staff drafts and can perform HOD and CFO approvals', a
   await expect(page.getByRole('button', { name: 'Withdraw to draft' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'CFO Approved', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Excel import / export' }).click()
-  await expect(page.getByRole('button', { name: 'Download import template' })).toBeVisible({ timeout: 20000 })
+  await expect(page.getByRole('button', { name: 'Download simple template' })).toBeVisible({ timeout: 20000 })
 })
 
-test('Excel template preview imports drafts and safely retries a lost response', async ({ page }, testInfo) => {
+test('Excel template preview imports history and safely retries a lost response', async ({ page }, testInfo) => {
   test.setTimeout(90000)
   const state = await setup(page)
   state.loseSaveResponse = true
   await page.goto('/dashboard')
   await page.getByRole('button', { name: 'Excel import / export' }).click()
   const downloaded = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Download import template' }).click()
+  await page.getByRole('button', { name: 'Download simple template' }).click()
   const download = await downloaded
   expect(download.suggestedFilename()).toBe('petty-cash-import-template.xlsx')
   await page.getByLabel('Choose Excel file').setInputFiles({ name: download.suggestedFilename(), mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: readFileSync(await download.path()) })
-  await expect(page.getByRole('button', { name: 'Import 1 reports as drafts' })).toBeEnabled({ timeout: 20000 })
+  await expect(page.getByRole('button', { name: 'Save 1 historical report', exact: true })).toBeEnabled({ timeout: 20000 })
   expect(state.writes).toHaveLength(0)
-  await page.locator('summary').click()
+  await page.locator('.excel-preview summary').click()
   await expect(page.getByRole('cell', { name: 'Replace this example expense' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('excel-preview.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-  await page.getByRole('button', { name: 'Import 1 reports as drafts' }).click()
+  await page.getByRole('button', { name: 'Save 1 historical report', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('recover safely without duplicates')
-  await page.getByRole('button', { name: 'Import 1 reports as drafts' }).click()
+  await page.getByRole('button', { name: 'Save 1 historical report', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('Import complete')
   expect(state.writes).toHaveLength(2)
   expect(state.writes[1]).toEqual(state.writes[0])
   expect(state.reports).toHaveLength(2)
-  expect(state.writes[0].p_reports[0].header.status).toBe('draft')
+  expect(state.writes[0].p_reports[0].header.status).toBe('historical')
 })
 
 test('invalid Excel rows show errors without database writes', async ({ page }) => {
@@ -361,12 +364,12 @@ test('invalid Excel rows show errors without database writes', async ({ page }) 
   const state = await setup(page)
   const book = new ExcelJS.Workbook()
   await book.xlsx.load(await templateBuffer())
-  book.getWorksheet('Items').getCell('E2').value = -10
+  book.getWorksheet('Petty Cash').getCell('H2').value = -10
   await page.goto('/excel')
   await page.getByLabel('Choose Excel file').setInputFiles({ name: 'invalid.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: Buffer.from(await book.xlsx.writeBuffer()) })
-  await expect(page.getByRole('alert')).toContainText('Items row 2: Amount cannot be negative', { timeout: 20000 })
+  await expect(page.getByRole('alert')).toContainText('Petty Cash row 2: Amount cannot be negative', { timeout: 20000 })
   expect(state.writes).toHaveLength(0)
-  await expect(page.getByRole('button', { name: /Import \d+ reports as drafts/ })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Save \d+ historical reports/ })).toHaveCount(0)
 })
 
 test('crafted Excel archive is rejected in the worker without database writes', async ({ page }) => {
@@ -380,7 +383,7 @@ test('crafted Excel archive is rejected in the worker without database writes', 
   await expect(page.getByRole('alert')).toContainText('Cannot read this workbook archive', { timeout: 20000 })
   expect(state.writes).toHaveLength(0)
   await expect(page.getByLabel('Choose Excel file')).toBeEnabled()
-  await expect(page.getByRole('button', { name: /Import \d+ reports as drafts/ })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Save \d+ historical reports/ })).toHaveCount(0)
 })
 
 test('Excel export includes records beyond one page, numeric values and items', async ({ page }) => {
@@ -391,12 +394,12 @@ test('Excel export includes records beyond one page, numeric values and items', 
   await page.goto('/excel')
   await expect(page.getByLabel('Choose Excel file')).toHaveCount(0)
   const downloaded = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Download Excel', exact: true }).click()
+  await page.getByRole('button', { name: 'Download all records', exact: true }).click()
   const book = new ExcelJS.Workbook()
   await book.xlsx.readFile(await (await downloaded).path())
-  expect(book.getWorksheet('Reports').rowCount).toBe(106)
-  expect(book.getWorksheet('Items').rowCount).toBe(106)
-  expect(book.getWorksheet('Items').getCell('E106').value).toBe(100)
+  expect(book.getWorksheet('Report Summary').rowCount).toBe(106)
+  expect(book.getWorksheet('Petty Cash').rowCount).toBe(106)
+  expect(book.getWorksheet('Petty Cash').getCell('H106').value).toBe(100)
   await expect(page.getByRole('status')).toContainText('Downloaded 105 reports')
 })
 
@@ -407,9 +410,71 @@ test('failed Excel export shows an error instead of downloading partial data', a
   const downloads = []
   page.on('download', (download) => downloads.push(download))
   await page.goto('/excel')
-  await page.getByRole('button', { name: 'Download Excel', exact: true }).click()
+  await page.getByRole('button', { name: 'Download all records', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('could not be completed')
   expect(downloads).toHaveLength(0)
+})
+
+test('date downloads are inclusive; full downloads ignore date fields and include history', async ({ page }, testInfo) => {
+  const state = await setup(page)
+  state.reports = ['2015-01-01', '2020-01-01', '2020-01-31', '2020-02-01'].map((date, i) =>
+    ({ ...baseReport, id: 'report-' + i, report_date: date, status: i === 0 ? 'historical' : 'submitted' }))
+  state.items = state.reports.map((r) => ({ ...baseItems[0], report_id: r.id }))
+  await page.goto('/excel')
+  await page.getByLabel('From date').fill('2020-01-01')
+  await page.getByLabel('To date').fill('2020-01-31')
+  let downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download selected dates' }).click()
+  const book = new ExcelJS.Workbook()
+  await book.xlsx.readFile(await (await downloaded).path())
+  expect(book.getWorksheet('Petty Cash').getColumn(2).values.slice(2)).toEqual(['2020-01-01', '2020-01-31'])
+  downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download all records' }).click()
+  await book.xlsx.readFile(await (await downloaded).path())
+  expect(book.getWorksheet('Petty Cash').rowCount).toBe(5)
+  expect(book.getWorksheet('Petty Cash').getCell('I2').value).toBe('Historical record')
+  await page.getByLabel('To date').fill('2020-01-01')
+  downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download selected dates' }).click()
+  await book.xlsx.readFile(await (await downloaded).path())
+  expect(book.getWorksheet('Petty Cash').rowCount).toBe(2)
+  await page.screenshot({ path: testInfo.outputPath('simplified-excel.png'), fullPage: true })
+})
+
+test('empty and reversed date ranges show a message without downloading', async ({ page }) => {
+  await setup(page)
+  const downloads = []
+  page.on('download', (d) => downloads.push(d))
+  await page.goto('/excel')
+  await expect(page.getByRole('button', { name: 'Download selected dates' })).toBeDisabled()
+  await page.getByLabel('From date').fill('2010-01-01')
+  await page.getByLabel('To date').fill('2010-01-02')
+  await page.getByRole('button', { name: 'Download selected dates' }).click()
+  await expect(page.getByRole('status')).toContainText('No reports found')
+  await page.getByLabel('From date').fill('2020-01-01')
+  await page.getByRole('button', { name: 'Download selected dates' }).click()
+  await expect(page.getByRole('alert')).toContainText('start and end date in order')
+  expect(downloads).toHaveLength(0)
+})
+
+test('submitted report provides its own Excel download; history has no approval or edit controls', async ({ page }) => {
+  const state = await setup(page, 'admin')
+  state.reports[0].status = 'submitted'
+  await page.goto('/report/' + reportId)
+  const downloaded = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download Excel', exact: true }).click()
+  const book = new ExcelJS.Workbook()
+  await book.xlsx.readFile(await (await downloaded).path())
+  expect(book.getWorksheet('Report Summary').rowCount).toBe(2)
+  expect(book.getWorksheet('Petty Cash').getCell('I2').value).toBe('Submitted')
+  expect(book.getWorksheet('Petty Cash').getCell('H2').value).toBe(100)
+  state.reports[0].status = 'historical'
+  await page.reload()
+  await expect(page.getByText(/does not affect the current shared balance or require approval/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Edit draft' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Withdraw to draft' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Delete draft' })).toHaveCount(0)
+  await expect(page.locator('.rd-signatures')).toContainText('Not recorded')
 })
 test('invalid inputs do not write; a corrected submission writes once', async ({ page }) => {
   const state = await setup(page)

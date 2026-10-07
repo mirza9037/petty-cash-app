@@ -5,7 +5,8 @@ import { canEdit } from '../lib/roles'
 import { today } from '../lib/domain'
 import { sumMoney, formatMoney } from '../lib/money'
 import { loadExportReports, importReports, errorMessage } from '../lib/reports'
-import { MAX_FILE_BYTES, templateBuffer, exportBuffer, downloadWorkbook, importPayload } from '../lib/excel'
+import { MAX_FILE_BYTES, templateBuffer, downloadWorkbook, importPayload } from '../lib/excel'
+import { prepareWorkbook } from '../lib/excelDownload'
 
 export default function ExcelTransfer({ user }) {
   const [busy, setBusy] = useState('')
@@ -13,12 +14,15 @@ export default function ExcelTransfer({ user }) {
   const [notice, setNotice] = useState('')
   const [preview, setPreview] = useState(null)
   const [saved, setSaved] = useState([])
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const worker = useRef(null)
   const running = useRef(false)
   const alive = useRef(true)
+  const exportController = useRef(null)
   useEffect(() => {
     alive.current = true
-    return () => { alive.current = false; worker.current?.terminate() }
+    return () => { alive.current = false; worker.current?.terminate(); exportController.current?.abort() }
   }, [])
   const run = async (label, operation) => {
     if (running.current) return
@@ -64,41 +68,60 @@ export default function ExcelTransfer({ user }) {
       if (alive.current) setPreview({ reports, payload, filename: file.name })
     })
   }
+  const download = (all) => run('Preparing Excel download…', async () => {
+    if (!all && (!from || !to || from > to)) throw new Error('Choose a start and end date in order.')
+    const reports = await loadExportReports(undefined, all ? {} : { from, to })
+    if (!reports.length) { setNotice('No reports found for these dates. Choose another date range.'); return }
+    if (!alive.current) return
+    exportController.current = new AbortController()
+    const buffer = await prepareWorkbook(reports, all ? 'All records' : from + ' to ' + to + ' (inclusive report dates)', exportController.current.signal)
+    if (!alive.current) return
+    downloadWorkbook(buffer, 'petty-cash-' + (all ? 'all-' + today() : from + '-to-' + to) + '.xlsx')
+    setNotice('Downloaded ' + reports.length + (reports.length === 1 ? ' report' : ' reports') + ' with expense rows.')
+  })
   return <div className="dash-page">
     <Navbar user={user} />
     <main className="dash-main excel-transfer">
-      <h1>Excel import and export</h1>
+      <h1>Petty cash Excel</h1>
+      <p>Download your records or upload past petty-cash sheets. All amounts are in PKR.</p>
       <Link to="/dashboard">Back to dashboard</Link>
       {error && <p className="error-banner" role="alert">{error}</p>}
       <p role="status" aria-live="polite">{busy || notice}</p>
       <section className="nr-card">
-        <h2 className="nr-card-head">Download database records</h2>
+        <h2 className="nr-card-head">Download records</h2>
         <div className="nr-card-body">
-          <p>Export all reports you can access, with their expense rows, balances, owners and approval statuses. Dashboard filters do not apply. Amounts are in PKR.</p>
-          <button className="secondary-button" disabled={!!busy} onClick={() => run('Preparing export…', async () => {
-            const reports = await loadExportReports()
-            const buffer = await exportBuffer(reports)
-            if (!alive.current) return
-            downloadWorkbook(buffer, 'petty-cash-records-' + today() + '.xlsx')
-            setNotice('Downloaded ' + reports.length + ' reports with their expense rows.')
-          })}>Download Excel</button>
+          <p>Choose report dates, or download everything—including historical records, drafts and approval statuses.</p>
+          <div className="report-filters">
+            <label>From date<input type="date" value={from} disabled={!!busy} onChange={(e) => setFrom(e.target.value)} /></label>
+            <label>To date<input type="date" value={to} min={from || undefined} disabled={!!busy} onChange={(e) => setTo(e.target.value)} /></label>
+          </div>
+          <p className="helper-text">For a single day, use the same date in both fields. Each report also has its own Excel download button.</p>
+          <div className="excel-actions">
+            <button className="nr-btn nr-btn-submit" disabled={!!busy || !from || !to} onClick={() => download(false)}>Download selected dates</button>
+            <button className="secondary-button" disabled={!!busy} onClick={() => download(true)}>Download all records</button>
+          </div>
         </div>
       </section>
       {canEdit(user) ? <section className="nr-card">
-        <h2 className="nr-card-head">Upload records as drafts</h2>
+        <h2 className="nr-card-head">Upload past records</h2>
         <div className="nr-card-body">
-          <p>Fill the Reports and Items sheets in the template, matching each expense to its Report Key. Replace the example data before uploading. You can import up to 50 reports with 100 expense rows each.</p>
-          <p>All reports save together as drafts under your account. Review them and refresh the opening balance before submitting for approval. Uploading the same keys and contents again with your account reuses the earlier import. Changed contents or keys create new drafts.</p>
+          <ol className="excel-steps">
+            <li>Download the simple template and replace the example with your past expenses.</li>
+            <li>Use one row per expense. Repeat the report number for expenses in the same report. Enter its date and balances on the first row.</li>
+            <li>Choose the file, review the preview, then save it.</li>
+          </ol>
+          <p className="helper-text">Uploads are saved as historical records. Your current balance stays the same; past approvals are not recreated.</p>
           <button className="secondary-button" disabled={!!busy} onClick={() => run('Preparing template…', async () => {
             const buffer = await templateBuffer()
             if (alive.current) downloadWorkbook(buffer, 'petty-cash-import-template.xlsx')
-          })}>Download import template</button>
+          })}>Download simple template</button>
           <label className="excel-file-label" htmlFor="excel-upload">Choose Excel file (.xlsx, up to 2 MB)</label>
           <input id="excel-upload" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={!!busy} onChange={chooseFile} />
           {preview && <div>
             <h3>Preview: {preview.filename}</h3>
-            <p>{preview.reports.length} reports ready to import. Check the details below before saving.</p>
-            {preview.reports.map((report) => <details className="excel-preview" key={report.key}>
+            <p>Reports: {preview.reports.length} · Expenses: {preview.reports.reduce((n, r) => n + r.items.length, 0)}. Review before saving.</p>
+            <p className="helper-text">Your current shared balance will stay the same. An unchanged upload under the same account is safe to retry. Changed data creates a new historical copy.</p>
+            {preview.reports.slice(0, 20).map((report) => <details className="excel-preview" key={report.key}>
               <summary>{report.key} · {report.header.report_date} · {report.items.length} expenses · {formatMoney(sumMoney(report.items))}</summary>
               <p>Opening balance: {formatMoney(report.header.prev_balance)} · Cash received: {formatMoney(report.header.cash_received)}</p>
               <div className="dash-table-overflow"><table className="dash-table">
@@ -106,17 +129,22 @@ export default function ExcelTransfer({ user }) {
                 <tbody>{report.items.map((item, index) => <tr key={index}><td>{item.description}</td><td>{item.section}</td><td>{item.category}</td><td>{formatMoney(item.amount, false)}</td></tr>)}</tbody>
               </table></div>
             </details>)}
-            <button className="nr-btn nr-btn-submit" disabled={!!busy} onClick={() => run('Saving imported drafts…', async () => {
+            {preview.reports.length > 20 && <p>Showing the first 20 reports. All {preview.reports.length} reports will be saved.</p>}
+            <button className="nr-btn nr-btn-submit" disabled={!!busy} onClick={() => run('Saving historical records…', async () => {
               let result
               try { result = await importReports(preview.payload) }
               catch (failure) { throw new Error(errorMessage(failure) + ' Retry this import or re-upload the unchanged workbook to recover safely without duplicates.') }
               if (!alive.current) return
               setSaved(result.map((report) => ({ ...report, key: preview.reports[preview.payload.findIndex((p) => p.report_id === report.id)].key })))
               setPreview(null)
-              setNotice('Import complete. ' + result.length + ' reports are available. Previously imported reports were reused.')
-            })}>Import {preview.reports.length} reports as drafts</button>
+              setNotice('Import complete. ' + result.length + ' historical reports are available. Your current balance is unchanged.')
+            })}>Save {preview.reports.length} historical {preview.reports.length === 1 ? 'report' : 'reports'}</button>
           </div>}
           {!!saved.length && <ul>{saved.map((report) => <li key={report.id}><Link to={'/report/' + report.id}>View {report.key}</Link></li>)}</ul>}
+          <details className="excel-help"><summary>File format and larger datasets</summary>
+            <p>Use the Petty Cash sheet in the template or a download from this page. The earlier Reports / Items template is also supported. Copy records from other layouts into the simple template and paste values instead of formulas.</p>
+            <p>Upload up to 500 reports and 10,000 expense rows per file, with up to 100 expenses per report. Files must be .xlsx and at most 2 MB. For years of records, upload one month or year at a time. Stored records remain available across years.</p>
+          </details>
         </div>
       </section> : <p>Excel import is available to creators and administrators. You can download the records above.</p>}
     </main>

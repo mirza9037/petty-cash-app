@@ -1,12 +1,14 @@
 export const SECTIONS = ['Civil Works', 'HVAC', 'Mechanical', 'Carpenter', 'Outreach', 'Electrical']
 export const STATUS_LABELS = {
   draft: 'Draft',
+  historical: 'Historical record',
   submitted: 'Submitted',
   hod_approved: 'HOD Approved',
   cfo_approved: 'CFO Approved',
 }
 export const STATUS_BADGES = {
   draft: { bg: '#e8e8e8', color: '#555' },
+  historical: { bg: '#ede8f7', color: '#594580' },
   submitted: { bg: '#fef3cd', color: '#856404' },
   hod_approved: { bg: '#cce5ff', color: '#004085' },
   cfo_approved: { bg: '#d4edda', color: '#155724' },
@@ -38,6 +40,7 @@ export function groupItems(items) {
   return [...groups.values()]
 }
 export function eventLabel(event) {
+  if (event.to_status === 'historical') return 'Historical upload'
   return event.to_status === 'draft' && ['submitted', 'hod_approved', 'cfo_approved'].includes(event.from_status)
     ? 'Withdrawn from ' + STATUS_LABELS[event.from_status] + ' to Draft'
     : STATUS_LABELS[event.to_status] || event.to_status

@@ -73,6 +73,7 @@ before(async () => {
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070001_withdraw_reports.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070002_administrator_role.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070003_delete_drafts.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610070004_historical_excel.sql', import.meta.url), 'utf8'))
   await db.query("insert into public.profiles(id,email,role,display_name) values($1,'admin@tabbaheart.org','admin','Administrator')", [users.admin])
 })
 after(() => db.close())
@@ -97,6 +98,82 @@ const header = (status = 'draft', opening = 0) => ({
 const items = [
   { description: 'Pipe repair', section: 'Civil Works', category: 'Maintenance', amount: 100.25 },
 ]
+const historicalEntry = (date = '2020-01-15') => ({ request_id: randomUUID(), report_id: randomUUID(),
+  header: { ...header(), status: 'historical', report_date: date, source_reference: 'OLD-001' }, items })
+async function historicalImport(entries) {
+  return (await db.query('select public.import_historical_reports($1) as result', [JSON.stringify(entries)])).rows[0].result
+}
+
+test('historical upload is audited, atomic and excludes even current-month records from the ledger', async () => {
+  await login('creator')
+  await save({ data: { ...header('submitted'), report_date: new Date().toISOString().slice(0, 10) } })
+  const summary = (await db.query('select public.department_summary() as s')).rows[0].s
+  const entries = [historicalEntry(), historicalEntry(new Date().toISOString().slice(0, 10))]
+  const result = await historicalImport(entries)
+  assert.equal(result.length, 2)
+  assert.deepEqual(await historicalImport(entries), result)
+  assert.deepEqual((await db.query('select public.department_summary() as s')).rows[0].s, summary)
+  const report = (await db.query('select * from public.expense_reports where id=$1', [entries[0].report_id])).rows[0]
+  assert.equal(report.status, 'historical')
+  assert.equal(report.submitted_at, null)
+  assert.equal(report.source_reference, 'OLD-001')
+  assert.equal(report.created_by, users.creator)
+  assert.equal(Number(report.outstanding_balance), 899.75)
+  assert.deepEqual((await db.query('select to_status from public.report_events where report_id=$1', [report.id])).rows, [{ to_status: 'historical' }])
+  await denied(() => save({ id: report.id, revision: 1 }), /Report changed/)
+  await denied(() => withdraw(report), /Only submitted or approved/)
+  await denied(() => removeDraft(report), /Report changed or was submitted/)
+  await login('hod')
+  await denied(() => approve(report, 'hod_approved'), /not permitted/)
+  assert.equal((await db.query('select count(*)::int as n from public.expense_reports')).rows[0].n, 3)
+})
+
+test('historical upload rejects invalid data, collisions and changed retry content without partial writes', async () => {
+  await login('creator')
+  const first = historicalEntry()
+  first.request_id = '00000000-0000-4000-8000-000000000001'
+  await denied(() => historicalImport([first, { ...historicalEntry(), request_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', items: [{ ...items[0], amount: -1 }] }]), /Invalid historical expense/)
+  assert.equal((await db.query('select count(*)::int as n from public.expense_reports')).rows[0].n, 0)
+  await historicalImport([first])
+  await denied(() => historicalImport([{ ...first, header: { ...first.header, cash_received: 1 } }]), /different data/)
+  await denied(() => historicalImport([{ ...historicalEntry(), report_id: first.report_id }]), /duplicate key/)
+  await denied(() => historicalImport([{ ...historicalEntry(), header: { ...first.header, status: 'cfo_approved' } }]), /Historical records require/)
+  await denied(() => historicalImport([{ ...historicalEntry(), header: { ...first.header, report_date: '2099-01-01' } }]), /future/)
+  await denied(() => historicalImport([first, first]), /Duplicate/)
+  await denied(() => historicalImport(Array.from({ length: 501 }, historicalEntry)), /1 and 500/)
+  await login('second')
+  await denied(() => historicalImport([first]), /different data/)
+  await db.exec('reset role')
+  assert.equal((await db.query('select count(*)::int as n from public.historical_import_requests')).rows[0].n, 1)
+})
+
+test('only active creators and admins upload history; all staff can read it', async () => {
+  await db.exec('set local role anon')
+  await denied(() => historicalImport([historicalEntry()]), /permission denied/)
+  for (const role of ['hod', 'cfo', 'outsider']) {
+    await login(role)
+    await denied(() => historicalImport([historicalEntry()]), /Only active creators and administrators/)
+  }
+  await login('admin')
+  const entry = historicalEntry()
+  await historicalImport([entry])
+  await denied(() => db.query('select * from public.historical_import_requests'), /permission denied/)
+  for (const role of ['creator', 'second', 'hod', 'cfo']) {
+    await login(role)
+    assert.equal((await db.query('select count(*)::int as n from public.expense_reports')).rows[0].n, 1)
+  }
+  await db.exec('reset role')
+  await db.query('update public.profiles set active=false where id=$1', [users.creator])
+  await login('creator')
+  await denied(() => historicalImport([historicalEntry()]), /Only active creators and administrators/)
+})
+
+test('historical upload handles more than the previous fifty-report limit', async () => {
+  await login('creator')
+  const entries = Array.from({ length: 120 }, () => historicalEntry())
+  assert.equal((await historicalImport(entries)).length, 120)
+  assert.equal((await db.query('select count(*)::int as n from public.expense_items')).rows[0].n, 120)
+})
 async function save({
   request = randomUUID(),
   id = null,

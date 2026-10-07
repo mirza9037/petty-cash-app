@@ -77,11 +77,16 @@ export async function resolveSave(requestId, discard = false) {
 
 // Keyset pagination avoids the API row limit and keeps each report with its
 // items in one database statement. Never return a silently truncated export.
-export async function loadExportReports(client = supabase) {
+export async function loadExportReports(client = supabase, { from = '', to = '' } = {}) {
+  if ((from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) || (to && !/^\d{4}-\d{2}-\d{2}$/.test(to)) || (from && to && from > to))
+    throw new Error('Choose a valid date range with the start date before the end date.')
   const reports = []
+  let expenseRows = 0
   let after = null
   for (;;) {
     let query = client.from('expense_reports').select('*,expense_items(*)').order('id').limit(100).retry(false)
+    if (from) query = query.gte('report_date', from)
+    if (to) query = query.lte('report_date', to)
     if (after) query = query.gt('id', after)
     const { data, error } = await query
     if (error) throw error
@@ -90,14 +95,15 @@ export async function loadExportReports(client = supabase) {
     if (!data.length) return reports
     if (after && data[0].id <= after) throw new Error('Export pagination did not advance')
     reports.push(...data)
-    if (reports.length > 10000) throw new Error('Export exceeds 10,000 reports. Contact your administrator for a full export.')
+    expenseRows += data.reduce((total, r) => total + Math.max(1, r.expense_items.length), 0)
+    if (expenseRows > 200000) throw new Error('This download exceeds 200,000 expense rows. Download smaller date ranges to include all your data.')
     after = data[data.length - 1].id
     // Even a short page may reflect a server-configured cap, so fetch until empty.
   }
 }
 
 export async function importReports(payload) {
-  const { data, error } = await supabase.rpc('import_expense_reports', { p_reports: payload })
+  const { data, error } = await supabase.rpc('import_historical_reports', { p_reports: payload })
   if (error) throw error
   if (!Array.isArray(data) || data.length !== payload.length || data.some((r) => !r.id))
     throw new Error('Import response was incomplete')

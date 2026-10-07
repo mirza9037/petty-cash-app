@@ -127,8 +127,8 @@ export default function Dashboard({ user }) {
           </div>
 
           <p className="helper-text">
-            One shared department balance. Drafts are excluded from summary amounts. Summaries cover
-            all reports.
+            One shared department balance. Drafts and historical uploads are excluded from summary amounts.
+            Use Excel to download all records or a date range.
           </p>
           {(error || actionError) && (
             <div role="alert" className="error-banner">

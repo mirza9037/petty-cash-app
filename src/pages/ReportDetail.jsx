@@ -72,6 +72,18 @@ export default function ReportDetail({ user }) {
       setExporting(false)
     }
   }
+  const handleExportExcel = async () => {
+    if (!reconciled || exporting) return
+    setExporting(true)
+    setExportError('')
+    try {
+      const [{ downloadWorkbook }, { prepareWorkbook }] = await Promise.all([import('../lib/excel'), import('../lib/excelDownload')])
+      const buffer = await prepareWorkbook([{ ...report, expense_items: items }], 'Report ' + report.id)
+      downloadWorkbook(buffer, 'petty-cash-report-' + report.report_date + '-' + report.id.slice(0, 8) + '.xlsx')
+    } catch {
+      setExportError('Excel download failed. Please try again.')
+    } finally { setExporting(false) }
+  }
   // ── Loading state ────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -168,6 +180,11 @@ export default function ReportDetail({ user }) {
             <button
               className="rd-export-btn"
               disabled={exporting || !reconciled}
+              onClick={handleExportExcel}
+            >Download Excel</button>
+            <button
+              className="rd-export-btn"
+              disabled={exporting || !reconciled}
               onClick={handleExportPDF}
             >
               {exporting && <span className="rd-spinner" />}
@@ -194,6 +211,9 @@ export default function ReportDetail({ user }) {
           <p className="helper-text">
             Report {report.id} · {STATUS_LABELS[report.status] || report.status}
           </p>
+          {report.status === 'historical' && <p className="helper-text">
+            Uploaded past record{report.source_reference ? ' · Reference: ' + report.source_reference : ''}. This record does not affect the current shared balance or require approval.
+          </p>}
           {/* Export error */}
           {exportError && (
             <div className="rd-export-error" role="alert">
@@ -324,7 +344,7 @@ export default function ReportDetail({ user }) {
                 <div className="rd-sig-line" />
                 <p className="rd-sig-name">
                   {currentApprover(report, events, 'hod_approved') ||
-                    'Awaiting approval'}
+                    (report.status === 'historical' ? 'Not recorded' : 'Awaiting approval')}
                 </p>
                 <p className="rd-sig-title">HOD FMES</p>
               </div>
@@ -332,7 +352,7 @@ export default function ReportDetail({ user }) {
                 <div className="rd-sig-line" />
                 <p className="rd-sig-name">
                   {currentApprover(report, events, 'cfo_approved') ||
-                    'Awaiting approval'}
+                    (report.status === 'historical' ? 'Not recorded' : 'Awaiting approval')}
                 </p>
                 <p className="rd-sig-title">CFO</p>
               </div>

@@ -11,6 +11,11 @@
 .excel-preview { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; }
 .excel-preview summary { cursor: pointer; line-height: 1.6; overflow-wrap: anywhere; }
 .excel-transfer input[type="file"] { max-width: 100%; }
+.excel-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.excel-steps { padding-left: 22px; line-height: 1.7; }
+.excel-steps li { margin-bottom: 8px; }
+.excel-help { margin-top: 24px; }
+.excel-help summary { cursor: pointer; font-weight: 600; }
 .dash-header { flex-wrap: wrap; gap: 12px; }
 /* ── Minimal reset — petty cash app ─────────────────────────────────────── */
 *,
