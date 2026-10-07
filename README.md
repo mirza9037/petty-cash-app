@@ -51,6 +51,14 @@ For browser tests, install Chromium using npx playwright install chromium. Windo
 
 GitHub Actions runs clean installation, lint, unit/database tests, build, and Chromium browser tests on pushes and pull requests. The existing repository is https://github.com/mirza9037/petty-cash-app.
 
+## Review verification — 7 October 2026
+
+Reviewed the historical Excel changes from `2e65238` through `32a50ac`, including related report permissions and financial rules. An independent Bugbot review agent found no actionable functional defects and checked the maximum 500-report / 10,000-expense import. The dedicated Bugbot engine was unavailable.
+
+The Security Review agent was blocked by the platform's cybersecurity filter on its initial attempt and one read-only retry, so that specialist review remains incomplete. Manual code and existing regression-test checks covered trusted staff roles, RPC permissions, immutable historical records, money validation, approval transitions, retry isolation, and bounded workbook processing; no confirmed issue was found in those checks. The dependency audit reported zero known vulnerabilities. This records the checks performed, rather than a guarantee that the application has no vulnerabilities.
+
+Unit/database tests, lint, production build and the GitHub browser checks validate this deployment. No application changes were required by the completed review.
+
 ## Project layout
 
 - src/pages — login, paginated dashboard, create/edit form, detail.
