@@ -230,6 +230,20 @@ test('invalid Excel rows show errors without database writes', async ({ page }) 
   await expect(page.getByRole('button', { name: /Import \d+ reports as drafts/ })).toHaveCount(0)
 })
 
+test('crafted Excel archive is rejected in the worker without database writes', async ({ page }) => {
+  test.setTimeout(90000)
+  const state = await setup(page)
+  const buffer = Buffer.from(await templateBuffer())
+  buffer.writeUInt16LE(0, buffer.length - 14)
+  buffer.writeUInt16LE(0, buffer.length - 12)
+  await page.goto('/excel')
+  await page.getByLabel('Choose Excel file').setInputFiles({ name: 'crafted.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer })
+  await expect(page.getByRole('alert')).toContainText('Cannot read this workbook archive', { timeout: 20000 })
+  expect(state.writes).toHaveLength(0)
+  await expect(page.getByLabel('Choose Excel file')).toBeEnabled()
+  await expect(page.getByRole('button', { name: /Import \d+ reports as drafts/ })).toHaveCount(0)
+})
+
 test('Excel export includes records beyond one page, numeric values and items', async ({ page }) => {
   test.setTimeout(90000)
   const state = await setup(page, 'hod')

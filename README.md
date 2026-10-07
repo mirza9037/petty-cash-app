@@ -31,6 +31,8 @@ Confirm **Import reports as drafts** to save the entire workbook in one transact
 
 Apply `supabase/migrations/202610050002_excel_import.sql` before deploying the Excel UI. ExcelJS is loaded with the Excel page; its compatible UUID dependency is pinned to 11.1.1 to address the published advisory.
 
+Workbook import validates the complete ZIP directory, rejects inconsistent entry counts and overlapping data, and checks actual decompressed bytes with a 20 MiB budget in 16 KiB chunks. Entry lengths and CRCs must match. ExcelJS receives a rebuilt, uncompressed archive containing only verified entries; attacker-supplied ZIP metadata never reaches its decompressor. The worker timeout remains a separate processing-time limit.
+
 ## Checks
 
 - npm test — PostgreSQL authorization/transaction tests plus money, calendar, grouping, and PDF tests.

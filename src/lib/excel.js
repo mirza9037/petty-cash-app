@@ -2,33 +2,12 @@ import ExcelJS from 'exceljs'
 import { SECTIONS, today } from './domain.js'
 import { reportSchema, lineItemSchema, validate } from './validation.js'
 import { toPaisa, sumMoney } from './money.js'
+import { boundedWorkbookArchive } from './xlsxArchive.js'
+export { checkArchiveSize } from './xlsxArchive.js'
 
 export const REPORT_COLUMNS = ['Report Key', 'Report Date', 'Opening Balance (PKR)', 'Cash Received (PKR)']
 export const ITEM_COLUMNS = ['Report Key', 'Description', 'Section', 'Category', 'Amount (PKR)']
 export const MAX_FILE_BYTES = 2 * 1024 * 1024
-
-// XLSX is a ZIP archive. Bound the declared expanded size before invoking the
-// parser; parsing also runs in a disposable worker with a time limit.
-export function checkArchiveSize(buffer) {
-  const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  let end = -1
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
-    if (view.getUint32(i, true) === 0x06054b50 && i + 22 + view.getUint16(i + 20, true) === bytes.length) { end = i; break }
-  }
-  if (end < 0) throw new Error('Cannot read this workbook. Use an unencrypted .xlsx template.')
-  const count = view.getUint16(end + 10, true)
-  let offset = view.getUint32(end + 16, true)
-  let expanded = 0
-  if (count > 1000) throw new Error('Workbook is too complex. Copy records into a clean template.')
-  for (let i = 0; i < count; i++) {
-    if (offset + 46 > end || view.getUint32(offset, true) !== 0x02014b50)
-      throw new Error('Cannot read this workbook archive. Use a clean .xlsx template.')
-    expanded += view.getUint32(offset + 24, true)
-    if (expanded > 20 * 1024 * 1024) throw new Error('Expanded workbook exceeds 20 MB. Copy records into a clean template.')
-    offset += 46 + view.getUint16(offset + 28, true) + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true)
-  }
-}
 
 function table(workbook, name, headers, rows, widths) {
   const sheet = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] })
@@ -111,9 +90,9 @@ function key(value, location) {
 
 export async function parseImport(buffer) {
   if (!buffer.byteLength || buffer.byteLength > MAX_FILE_BYTES) throw new Error('Choose an .xlsx file up to 2 MB.')
-  checkArchiveSize(buffer)
+  const bounded = boundedWorkbookArchive(buffer)
   const workbook = new ExcelJS.Workbook()
-  try { await workbook.xlsx.load(buffer) } catch { throw new Error('Cannot read this workbook. Save an unencrypted .xlsx file using the template.') }
+  try { await workbook.xlsx.load(bounded) } catch { throw new Error('Cannot read this workbook. Save an unencrypted .xlsx file using the template.') }
   if (workbook.getWorksheet('Export Info')) throw new Error('This is a database export. Copy records into the import template to create new drafts.')
   if (workbook.worksheets.some((s) => !['Reports', 'Items', 'Instructions'].includes(s.name)))
     throw new Error('Unexpected worksheet. Use only Reports, Items and Instructions from the template.')
