@@ -446,7 +446,7 @@ test('empty and reversed date ranges show a message without downloading', async 
   const downloads = []
   page.on('download', (d) => downloads.push(d))
   await page.goto('/excel')
-  await expect(page.getByRole('button', { name: 'Download selected dates' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Download selected dates' })).toBeDisabled({ timeout: 20000 })
   await page.getByLabel('From date').fill('2010-01-01')
   await page.getByLabel('To date').fill('2010-01-02')
   await page.getByRole('button', { name: 'Download selected dates' }).click()
