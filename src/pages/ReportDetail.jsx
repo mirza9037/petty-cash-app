@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import { loadReport, errorMessage } from '../lib/reports'
@@ -163,9 +163,6 @@ export default function ReportDetail({ user }) {
     )
   }
 
-  // ── Running S.No counter across all sections ──────────────────────────────────
-  let globalSno = 0
-
   return (
     <>
       <div className="rd-page">
@@ -286,37 +283,25 @@ export default function ReportDetail({ user }) {
                   </tr>
                 </thead>
                 <tbody>
+                  {items.map((item, index) => (
+                    <tr key={item.id}>
+                      <td style={{ textAlign: 'center', fontWeight: 700, color: '#999' }}>{index + 1}</td>
+                      <td>{item.description || '—'}</td>
+                      <td>{item.section || '—'}</td>
+                      <td>{item.category || '—'}</td>
+                      <td style={{ textAlign: 'right', fontFamily: "'Montserrat', monospace" }}>
+                        {fmt(item.amount)}
+                      </td>
+                    </tr>
+                  ))}
                   {groupedItems.map((section) => (
-                    <React.Fragment key={section.name}>
-                      {section.items.map((item) => {
-                        globalSno++
-                        return (
-                          <tr key={item.id}>
-                            <td style={{ textAlign: 'center', fontWeight: 700, color: '#999' }}>
-                              {globalSno}
-                            </td>
-                            <td>{item.description || '—'}</td>
-                            <td>{item.section || '—'}</td>
-                            <td>{item.category || '—'}</td>
-                            <td
-                              style={{ textAlign: 'right', fontFamily: "'Montserrat', monospace" }}
-                            >
-                              {fmt(item.amount)}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                      {/* Section subtotal */}
-                      <tr className="rd-subtotal">
-                        <td></td>
-                        <td colSpan={3} style={{ textAlign: 'right' }}>
-                          Subtotal — {section.name}
-                        </td>
-                        <td style={{ textAlign: 'right', fontFamily: "'Montserrat', monospace" }}>
-                          {fmt(section.subtotal)}
-                        </td>
-                      </tr>
-                    </React.Fragment>
+                    <tr key={section.name} className="rd-subtotal">
+                      <td></td>
+                      <td colSpan={3} style={{ textAlign: 'right' }}>Subtotal — {section.name}</td>
+                      <td style={{ textAlign: 'right', fontFamily: "'Montserrat', monospace" }}>
+                        {fmt(section.subtotal)}
+                      </td>
+                    </tr>
                   ))}
 
                   {/* Grand total */}

@@ -100,3 +100,17 @@ test('long PDF uses multiple pages, repeats headers, and includes approval statu
   assert.ok(content.split('Amount \\(PKR\\)').length > 2)
   assert.match(content, /Grand total/)
 })
+
+test('PDF keeps entered expense order when sections repeat', () => {
+  const doc = buildReportPdf({ id: '11111111-1111-4111-8111-111111111111',
+    status: 'draft', submitted_by: 'Aftab', report_date: '2026-10-01',
+    prev_balance: 0, cash_received: 20, total_expenses: 6, outstanding_balance: 14 }, [
+    { description: 'Pipe first', section: 'Civil Works', category: 'Maintenance', amount: 1 },
+    { description: 'Wire second', section: 'Electrical', category: 'Maintenance', amount: 2 },
+    { description: 'Bolt third', section: 'Civil Works', category: 'Maintenance', amount: 3 },
+  ])
+  const pdf = doc.output()
+  assert.ok(pdf.indexOf('Pipe first') < pdf.indexOf('Wire second'))
+  assert.ok(pdf.indexOf('Wire second') < pdf.indexOf('Bolt third'))
+  assert.ok(pdf.indexOf('Bolt third') < pdf.indexOf('Subtotal - Civil Works'))
+})

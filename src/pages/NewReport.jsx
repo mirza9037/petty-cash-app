@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { canEdit } from '../lib/roles'
-import { SECTIONS, today } from '../lib/domain'
+import { SECTIONS, groupItems, today } from '../lib/domain'
 import { previewPaisa, formatMoney } from '../lib/money'
 import { reportSchema, lineItemsSchema, validate } from '../lib/validation'
 import { loadReport, loadSummary, saveReport, resolveSave, errorMessage } from '../lib/reports'
@@ -134,21 +134,10 @@ export default function NewReport({ user }) {
   )
   const outstanding =
     (previewPaisa(prevBalance) + previewPaisa(cashReceived) - Math.round(totalExpenses * 100)) / 100
-  const groupedRows = useMemo(() => {
-    const groups = new Map()
-    for (const row of items) {
-      if (!groups.has(row.section)) groups.set(row.section, [])
-      groups.get(row.section).push(row)
-    }
-    return [...groups].flatMap(([section, rows]) => [
-      ...rows.map((row) => ({ type: 'item', row })),
-      {
-        type: 'subtotal',
-        section,
-        subtotal: rows.reduce((sum, row) => sum + previewPaisa(row.amount), 0) / 100,
-      },
-    ])
-  }, [items])
+  const sectionTotals = useMemo(() => groupItems(items).map((group) => ({
+    section: group.name,
+    subtotal: group.items.reduce((sum, row) => sum + previewPaisa(row.amount), 0) / 100,
+  })), [items])
   const updateItem = (key, field, value) =>
     setItems((rows) => rows.map((row) => (row.key === key ? { ...row, [field]: value } : row)))
   const addRow = () => {
@@ -225,7 +214,6 @@ export default function NewReport({ user }) {
     }
   }
   const fmt = (value) => formatMoney(value, false)
-  let globalSno = 0
   if (!canEdit(user))
     return (
       <>
@@ -401,26 +389,10 @@ export default function NewReport({ user }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {groupedRows.map((entry) => {
-                        if (entry.type === 'subtotal') {
-                          return (
-                            <tr key={`sub-${entry.section}`} className="nr-subtotal">
-                              <td></td>
-                              <td colSpan={3} style={{ textAlign: 'right' }}>
-                                Subtotal — {entry.section}
-                              </td>
-                              <td style={{ textAlign: 'right' }}>PKR {fmt(entry.subtotal)}</td>
-                              <td></td>
-                            </tr>
-                          )
-                        }
-
-                        const row = entry.row
-                        globalSno++
-                        return (
+                      {items.map((row, index) => (
                           <tr key={row.key}>
                             <td style={{ textAlign: 'center', fontWeight: 700, color: '#888' }}>
-                              {globalSno}
+                              {index + 1}
                             </td>
                             <td>
                               <input
@@ -428,7 +400,7 @@ export default function NewReport({ user }) {
                                 className="nr-t-input"
                                 placeholder="e.g. Pipe repair"
                                 maxLength={500}
-                                aria-label={'Description row ' + globalSno}
+                                aria-label={'Description row ' + (index + 1)}
                                 value={row.description}
                                 onChange={(e) => updateItem(row.key, 'description', e.target.value)}
                               />
@@ -436,7 +408,7 @@ export default function NewReport({ user }) {
                             <td>
                               <select
                                 className="nr-t-select"
-                                aria-label={'Section row ' + globalSno}
+                                aria-label={'Section row ' + (index + 1)}
                                 value={row.section}
                                 onChange={(e) => updateItem(row.key, 'section', e.target.value)}
                               >
@@ -452,7 +424,7 @@ export default function NewReport({ user }) {
                                 type="text"
                                 className="nr-t-input"
                                 maxLength={100}
-                                aria-label={'Category row ' + globalSno}
+                                aria-label={'Category row ' + (index + 1)}
                                 value={row.category}
                                 onChange={(e) => updateItem(row.key, 'category', e.target.value)}
                               />
@@ -465,7 +437,7 @@ export default function NewReport({ user }) {
                                 placeholder="0"
                                 step="0.01"
                                 min="0"
-                                aria-label={'Amount row ' + globalSno}
+                                aria-label={'Amount row ' + (index + 1)}
                                 value={row.amount}
                                 onChange={(e) => updateItem(row.key, 'amount', e.target.value)}
                               />
@@ -480,8 +452,16 @@ export default function NewReport({ user }) {
                               </button>
                             </td>
                           </tr>
-                        )
-                      })}
+                      ))}
+
+                      {sectionTotals.map((entry) => (
+                        <tr key={`sub-${entry.section}`} className="nr-subtotal">
+                          <td></td>
+                          <td colSpan={3} style={{ textAlign: 'right' }}>Subtotal — {entry.section}</td>
+                          <td style={{ textAlign: 'right' }}>PKR {fmt(entry.subtotal)}</td>
+                          <td></td>
+                        </tr>
+                      ))}
 
                       {/* ── Grand total ── */}
                       <tr className="nr-grand-total">

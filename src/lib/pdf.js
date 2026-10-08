@@ -25,24 +25,21 @@ export function buildReportPdf(report, items, events = []) {
   balances.forEach(([label, value], index) =>
     doc.text(label + ': PKR ' + money(value), 14, 63 + index * 6),
   )
-  let rowNumber = 0
-  const body = groupItems(items).flatMap((group) => [
-    ...group.items.map((item) => [
-      String(++rowNumber),
-      item.description,
-      item.section,
-      item.category,
-      money(item.amount),
-    ]),
-    [
-      {
-        content: 'Subtotal - ' + group.name,
-        colSpan: 4,
-        styles: { fontStyle: 'bold', halign: 'right' },
-      },
-      money(sumMoney(group.items)),
-    ],
+  const body = items.map((item, index) => [
+    String(index + 1),
+    item.description,
+    item.section,
+    item.category,
+    money(item.amount),
   ])
+  body.push(...groupItems(items).map((group) => [
+    {
+      content: 'Subtotal - ' + group.name,
+      colSpan: 4,
+      styles: { fontStyle: 'bold', halign: 'right' },
+    },
+    money(sumMoney(group.items)),
+  ]))
   body.push([
     { content: 'Grand total', colSpan: 4, styles: { fontStyle: 'bold', halign: 'right' } },
     money(report.total_expenses),
