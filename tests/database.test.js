@@ -74,6 +74,7 @@ before(async () => {
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070002_administrator_role.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070003_delete_drafts.sql', import.meta.url), 'utf8'))
   await db.exec(readFileSync(new URL('../supabase/migrations/202610070004_historical_excel.sql', import.meta.url), 'utf8'))
+  await db.exec(readFileSync(new URL('../supabase/migrations/202610080001_delete_historical.sql', import.meta.url), 'utf8'))
   await db.query("insert into public.profiles(id,email,role,display_name) values($1,'admin@tabbaheart.org','admin','Administrator')", [users.admin])
 })
 after(() => db.close())
@@ -103,6 +104,56 @@ const historicalEntry = (date = '2020-01-15') => ({ request_id: randomUUID(), re
 async function historicalImport(entries) {
   return (await db.query('select public.import_historical_reports($1) as result', [JSON.stringify(entries)])).rows[0].result
 }
+async function removeHistorical(reportId, revision = 1) {
+  return (await db.query('select public.delete_historical_report($1,$2) as result', [reportId, revision])).rows[0].result
+}
+
+test('every active staff role can remove historical records without changing the shared balance', async () => {
+  await login('creator')
+  await save({ data: { ...header('submitted'), report_date: new Date().toISOString().slice(0, 10) } })
+  const summary = (await db.query('select public.department_summary() as s')).rows[0].s
+  for (const role of ['creator', 'second', 'hod', 'cfo', 'admin']) {
+    await login('creator')
+    const entry = historicalEntry()
+    await historicalImport([entry])
+    await login(role)
+    assert.deepEqual(await removeHistorical(entry.report_id), { id: entry.report_id, deleted: true, revision: 2 })
+    assert.deepEqual(await removeHistorical(entry.report_id), { id: entry.report_id, deleted: true, revision: 2 })
+    assert.equal((await db.query('select count(*)::int as n from public.expense_reports where id=$1', [entry.report_id])).rows[0].n, 0)
+    assert.equal((await db.query('select count(*)::int as n from public.expense_items where report_id=$1', [entry.report_id])).rows[0].n, 0)
+    assert.equal((await db.query('select count(*)::int as n from public.report_events where report_id=$1', [entry.report_id])).rows[0].n, 0)
+    assert.deepEqual((await db.query('select public.department_summary() as s')).rows[0].s, summary)
+    await denied(() => historicalImport([entry]), /Only active creators and administrators|different data|was deleted/)
+    await login('creator')
+    await denied(() => historicalImport([entry]), /was deleted/)
+    await db.exec('reset role')
+    const retained = (await db.query('select deleted_at,deleted_by,revision from public.expense_reports where id=$1', [entry.report_id])).rows[0]
+    assert.ok(retained.deleted_at)
+    assert.equal(retained.deleted_by, users[role])
+    assert.equal(retained.revision, 2)
+  }
+})
+
+test('historical deletion rejects other statuses, stale revisions, anonymous and inactive accounts', async () => {
+  await login('creator')
+  const entry = historicalEntry()
+  await historicalImport([entry])
+  const draft = await save()
+  await denied(() => removeHistorical(draft.id), /Only historical/)
+  await denied(() => removeHistorical(entry.report_id, 0), /Report changed/)
+  await db.exec('set local role anon')
+  await denied(() => removeHistorical(entry.report_id), /permission denied/)
+  await db.exec('reset role')
+  await db.query('update public.profiles set active=false where id=$1', [users.hod])
+  await login('hod')
+  await denied(() => removeHistorical(entry.report_id), /Active staff access required/)
+  await login('outsider')
+  await denied(() => removeHistorical(entry.report_id), /Active staff access required/)
+  await login('cfo')
+  await removeHistorical(entry.report_id)
+  await login('creator')
+  await denied(() => removeHistorical(entry.report_id), /already been deleted/)
+})
 
 test('historical upload is audited, atomic and excludes even current-month records from the ledger', async () => {
   await login('creator')

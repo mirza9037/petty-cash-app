@@ -65,6 +65,8 @@ Apply `202610070004_historical_excel.sql` after all earlier migrations. `import_
 
 Historical records use existing staff read policies and direct-write restrictions. They are excluded from shared balance, monthly submitted spending and pending approvals; existing save, approval, withdrawal and draft-deletion functions cannot change them. Report date indexes support filters across years. Verify with `supabase db query --linked --file supabase/verify-historical-excel.sql`; all test writes are rolled back.
 
+Apply `202610080001_delete_historical.sql` to allow any active staff role to delete an individual historical record through `delete_historical_report`. It checks the report's status and revision, records the actor and deletion timestamp, and hides the report, items and events from staff reads and Excel exports. Current balances and approvals are untouched. The original upload receipt remains private, and retrying it cannot make a deleted record appear again. Verify with `supabase/verify-delete-historical.sql` before deploying the matching UI.
+
 ## Creator withdrawal
 
 Apply `202610070001_withdraw_reports.sql`. Per the requested workflow, active creators can withdraw their own reports even after CFO approval, but only while the report is the latest non-draft entry in the shared ledger. The RPC locks the report, verifies its revision and owner, then takes the same ledger lock used by submission. It changes status to draft without changing financial fields, clears the submission timestamp, advances the revision, and records the prior report and items in `report_events.report_snapshot`, all in one transaction. Existing client write restrictions protect these snapshots.

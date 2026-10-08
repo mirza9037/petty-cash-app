@@ -196,6 +196,16 @@ async function setup(page, role = 'creator') {
       if (state.loseSaveResponse) { state.loseSaveResponse = false; return reply({ message: 'lost response' }, 503) }
       return reply({ id: report.id, deleted: true, revision: report.revision })
     }
+    if (url.pathname.endsWith('delete_historical_report')) {
+      const args = request.postDataJSON()
+      state.writes.push(args)
+      const report = state.reports.find((r) => r.id === args.p_report_id)
+      if (state.deleteFail || report.status !== 'historical' || (!report.deleted_at && report.revision !== args.p_expected_revision))
+        return reply({ code: '40001', message: 'Report changed. Reload before deleting.' }, 409)
+      if (!report.deleted_at) Object.assign(report, { deleted_at: new Date().toISOString(), revision: report.revision + 1 })
+      if (state.loseSaveResponse) { state.loseSaveResponse = false; return reply({ message: 'lost response' }, 503) }
+      return reply({ id: report.id, deleted: true, revision: report.revision })
+    }
     if (url.pathname.endsWith('expense_reports')) {
       if (state.reportsFail) return reply({ message: 'outage' }, 503, { 'retry-after': '0' })
       if (url.searchParams.has('id'))
@@ -253,6 +263,43 @@ test('delete draft is hidden for other creators', async ({ page }) => {
   await page.goto('/dashboard')
   await expect(page.getByRole('button', { name: 'View', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Delete draft', exact: true })).toHaveCount(0)
+})
+
+for (const role of ['creator', 'hod', 'cfo', 'admin']) {
+  test(`${role} can delete a historical record from the dashboard`, async ({ page }) => {
+    const state = await setup(page, role)
+    state.reports[0].status = 'historical'
+    state.reports[0].created_by = 'another-creator'
+    await page.goto('/dashboard')
+    const remove = page.getByRole('button', { name: 'Delete historical record' })
+    await expect(remove).toBeVisible()
+    page.once('dialog', (dialog) => dialog.dismiss())
+    await remove.click()
+    expect(state.writes).toHaveLength(0)
+    state.loseSaveResponse = true
+    page.once('dialog', (dialog) => dialog.accept())
+    await remove.click()
+    await expect(page.getByRole('alert')).toContainText('retry safely')
+    page.once('dialog', (dialog) => dialog.accept())
+    await remove.click()
+    await expect(page.getByText('No reports match these filters.')).toBeVisible()
+    expect(state.writes).toEqual([
+      { p_report_id: reportId, p_expected_revision: 1 },
+      { p_report_id: reportId, p_expected_revision: 1 },
+    ])
+  })
+}
+
+test('historical deletion is available on details and not offered for regular reports', async ({ page }) => {
+  const state = await setup(page, 'cfo')
+  await page.goto('/report/' + reportId)
+  await expect(page.getByRole('button', { name: 'Delete historical record' })).toHaveCount(0)
+  state.reports[0].status = 'historical'
+  await page.reload()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Delete historical record' }).click()
+  await expect(page).toHaveURL(/dashboard/)
+  await expect(page.getByText('No reports match these filters.')).toBeVisible()
 })
 
 test('creator withdraws an approved report with snapshot and cleared signatures', async ({ page }) => {

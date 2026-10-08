@@ -5,6 +5,7 @@ import { loadReport, errorMessage } from '../lib/reports'
 import { groupItems, STATUS_LABELS, formatDate as fmtDate, currentApprover, eventLabel } from '../lib/domain'
 import WithdrawReport from '../components/WithdrawReport'
 import DeleteDraft from '../components/DeleteDraft'
+import DeleteHistorical from '../components/DeleteHistorical'
 import { formatMoney as fmt, sumMoney, toPaisa } from '../lib/money'
 import { canEdit } from '../lib/roles'
 const EMPTY = []
@@ -199,6 +200,7 @@ export default function ReportDetail({ user }) {
           )}
           <WithdrawReport user={user} report={report} onWithdrawn={() => { setResource(null); setRetry((v) => v + 1) }} />
           <DeleteDraft user={user} report={report} onDeleted={() => navigate('/dashboard')} />
+          <DeleteHistorical user={user} report={report} onDeleted={() => navigate('/dashboard')} />
           {!reconciled && (
             <div className="error-banner" role="alert">
               This report has missing or inconsistent amounts. Export is disabled until an
