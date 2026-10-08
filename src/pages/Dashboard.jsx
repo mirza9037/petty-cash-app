@@ -21,6 +21,7 @@ export default function Dashboard({ user }) {
   const [page, setPage] = useState(0)
   const [count, setCount] = useState(0)
   const [status, setStatus] = useState('')
+  const [view, setView] = useState('all')
   const [search, setSearch] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -39,7 +40,8 @@ export default function Dashboard({ user }) {
         .order('id')
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
         .retry(false)
-      if (status) query = query.eq('status', status)
+      if (view === 'historical') query = query.eq('status', 'historical')
+      else if (status) query = query.eq('status', status)
       if (search.trim())
         query = query.ilike('submitted_by', '%' + search.trim().replace(/[%_]/g, '') + '%')
       if (dateFrom) query = query.gte('report_date', dateFrom)
@@ -55,7 +57,7 @@ export default function Dashboard({ user }) {
     } finally {
       if (version === sequence.current) setLoading(false)
     }
-  }, [page, status, search, dateFrom, dateTo])
+  }, [page, status, view, search, dateFrom, dateTo])
   useEffect(() => {
     const timer = setTimeout(fetchReports, 200)
     // The ref is a request generation counter, not a DOM node. Invalidate late responses on cleanup.
@@ -105,6 +107,16 @@ export default function Dashboard({ user }) {
             )}
           </div>
 
+          <div className="report-view-tabs" role="tablist" aria-label="Report views">
+            <button role="tab" aria-selected={view === 'all'} className={view === 'all' ? 'active' : ''}
+              onClick={() => { setView('all'); setStatus(''); setPage(0) }}>All reports</button>
+            <button role="tab" aria-selected={view === 'historical'} className={view === 'historical' ? 'active' : ''}
+              onClick={() => { setView('historical'); setPage(0) }}>Historical records / Delete</button>
+          </div>
+          {view === 'historical' && <p className="helper-text">
+            Any signed-in staff member can delete a historical record here. It disappears for everyone and does not change the current balance.
+          </p>}
+
           {/* ═══════════ SUMMARY CARDS ═══════════ */}
           <div className="dash-cards">
             <div className="dash-card">
@@ -137,7 +149,7 @@ export default function Dashboard({ user }) {
             </div>
           )}
           <div className="report-filters">
-            <label>
+            {view === 'all' && <label>
               Status
               <select
                 value={status}
@@ -153,7 +165,7 @@ export default function Dashboard({ user }) {
                   </option>
                 ))}
               </select>
-            </label>
+            </label>}
             <label>
               Submitted by
               <input

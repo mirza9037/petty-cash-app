@@ -4,8 +4,10 @@ do $$
 declare uploader uuid; deleter uuid; entries jsonb; removed jsonb; before_summary jsonb;
   test_report_id uuid := gen_random_uuid(); test_request_id uuid := gen_random_uuid();
 begin
-  select id into strict uploader from public.profiles where active and role in ('creator','admin') order by role limit 1;
-  select id into strict deleter from public.profiles where active and role in ('hod','cfo','admin') order by role limit 1;
+  select id into strict uploader from public.profiles where active and role in ('creator','admin')
+    order by case when role='creator' then 0 else 1 end limit 1;
+  select id into strict deleter from public.profiles where active and role in ('hod','cfo','admin')
+    order by case role when 'hod' then 0 when 'cfo' then 1 else 2 end limit 1;
   perform set_config('request.jwt.claim.sub',uploader::text,true);
   set local role authenticated;
   before_summary := public.department_summary();

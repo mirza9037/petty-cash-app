@@ -270,7 +270,13 @@ for (const role of ['creator', 'hod', 'cfo', 'admin']) {
     const state = await setup(page, role)
     state.reports[0].status = 'historical'
     state.reports[0].created_by = 'another-creator'
+    state.reports.push({ ...baseReport, id: '33333333-3333-4333-8333-333333333333' })
     await page.goto('/dashboard')
+    const historyTab = page.getByRole('tab', { name: 'Historical records / Delete' })
+    await expect(historyTab).toBeVisible()
+    await historyTab.click()
+    await expect(historyTab).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('.dash-table tbody tr')).toHaveCount(1)
     const remove = page.getByRole('button', { name: 'Delete historical record' })
     await expect(remove).toBeVisible()
     page.once('dialog', (dialog) => dialog.dismiss())
@@ -283,6 +289,8 @@ for (const role of ['creator', 'hod', 'cfo', 'admin']) {
     page.once('dialog', (dialog) => dialog.accept())
     await remove.click()
     await expect(page.getByText('No reports match these filters.')).toBeVisible()
+    await page.getByRole('tab', { name: 'All reports' }).click()
+    await expect(page.locator('.dash-table tbody tr')).toHaveCount(1)
     expect(state.writes).toEqual([
       { p_report_id: reportId, p_expected_revision: 1 },
       { p_report_id: reportId, p_expected_revision: 1 },

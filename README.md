@@ -33,6 +33,8 @@ Confirm **Save historical reports** to save the whole upload in one transaction.
 
 Apply `supabase/migrations/202610070004_historical_excel.sql` after earlier migrations before deploying this UI. Run `supabase/verify-historical-excel.sql` for rollback-only production checks. The old draft import RPC remains for compatibility. ExcelJS is loaded with the Excel page; its compatible UUID dependency is pinned to 11.1.1.
 
+The dashboard's **Historical records / Delete** tab lists only imported history and shows the deletion control to every active staff account.
+
 Apply `supabase/migrations/202610080001_delete_historical.sql` before deploying the historical deletion control. It also hides deleted expense rows and events from direct staff reads. Run `supabase/verify-delete-historical.sql` for rollback-only checks.
 
 Workbook import validates the complete ZIP directory, rejects inconsistent entry counts and overlapping data, and checks actual decompressed bytes with a 20 MiB budget in 16 KiB chunks. Entry lengths and CRCs must match. ExcelJS receives a rebuilt, uncompressed archive containing only verified entries; attacker-supplied ZIP metadata never reaches its decompressor. The worker timeout remains a separate processing-time limit.
